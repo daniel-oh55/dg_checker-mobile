@@ -6,7 +6,7 @@
     "check": "pnpm --filter mobile run typecheck && pnpm --filter worker run check"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "packageManager": "pnpm@9.15.0"
 }
