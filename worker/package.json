@@ -9,7 +9,9 @@
     "typecheck": "pnpm run types && tsc --noEmit",
     "test": "pnpm run types && vitest run",
     "migrate:local": "wrangler d1 migrations apply DB --local",
-    "check": "pnpm run typecheck && pnpm run migrate:local && pnpm run test"
+    "check": "pnpm run typecheck && pnpm run migrate:local && pnpm run test",
+    "dataset:validate": "node scripts/dataset-import.mjs validate",
+    "dataset:build": "node scripts/dataset-import.mjs build-sql"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "^1.1.2",
