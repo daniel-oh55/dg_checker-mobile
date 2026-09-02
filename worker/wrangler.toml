@@ -5,5 +5,5 @@ compatibility_date = "2026-01-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "dg-segregation-db"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "98d01da6-bc00-453f-a2f2-8791cf752c9e"
 migrations_dir = "migrations"
