@@ -116,6 +116,7 @@ describe('buildSql', () => {
     const dataset = validateDataset(cloneFixture());
     const sql = buildSql(dataset);
 
+    expect(sql).toContain(`DELETE FROM app_metadata WHERE key IN ('dataset_schema_version', 'dataset_version');`);
     expect(sql).toContain('DELETE FROM segregation_class_rules;');
     expect(sql).toContain('DELETE FROM dg_entries;');
     expect(sql).toContain("('9001', 'A', 'TEST_A'");
@@ -126,9 +127,37 @@ describe('buildSql', () => {
     expect(sql).toContain(
       "INSERT INTO app_metadata (key, value) VALUES ('dataset_version', 'synthetic-test-v1')",
     );
-    expect(sql).not.toMatch(/DELETE FROM app_metadata/);
+    expect(sql).not.toMatch(/DELETE FROM app_metadata;/);
 
     expect(buildSql(validateDataset(cloneFixture()))).toBe(sql);
+  });
+
+  it('invalidates readiness metadata before replacing table data, and restores it only after all inserts', () => {
+    const dataset = validateDataset(cloneFixture());
+    const sql = buildSql(dataset);
+
+    const metadataDeleteIndex = sql.indexOf(
+      `DELETE FROM app_metadata WHERE key IN ('dataset_schema_version', 'dataset_version');`,
+    );
+    const rulesDeleteIndex = sql.indexOf('DELETE FROM segregation_class_rules;');
+    const entriesDeleteIndex = sql.indexOf('DELETE FROM dg_entries;');
+    const firstDgInsertIndex = sql.indexOf('INSERT INTO dg_entries');
+    const firstRuleInsertIndex = sql.indexOf('INSERT INTO segregation_class_rules');
+    const lastDgInsertIndex = sql.lastIndexOf('INSERT INTO dg_entries');
+    const lastRuleInsertIndex = sql.lastIndexOf('INSERT INTO segregation_class_rules');
+    const schemaUpsertIndex = sql.indexOf("INSERT INTO app_metadata (key, value) VALUES ('dataset_schema_version'");
+    const versionUpsertIndex = sql.indexOf("INSERT INTO app_metadata (key, value) VALUES ('dataset_version'");
+
+    expect(metadataDeleteIndex).toBeGreaterThanOrEqual(0);
+    expect(metadataDeleteIndex).toBeLessThan(rulesDeleteIndex);
+    expect(metadataDeleteIndex).toBeLessThan(entriesDeleteIndex);
+    expect(metadataDeleteIndex).toBeLessThan(firstDgInsertIndex);
+    expect(metadataDeleteIndex).toBeLessThan(firstRuleInsertIndex);
+
+    expect(schemaUpsertIndex).toBeGreaterThan(lastDgInsertIndex);
+    expect(schemaUpsertIndex).toBeGreaterThan(lastRuleInsertIndex);
+    expect(versionUpsertIndex).toBeGreaterThan(lastDgInsertIndex);
+    expect(versionUpsertIndex).toBeGreaterThan(lastRuleInsertIndex);
   });
 
   it('sorts entries and rules deterministically regardless of input order', () => {
