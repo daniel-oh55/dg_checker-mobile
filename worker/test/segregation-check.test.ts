@@ -1,6 +1,6 @@
 import { env, exports } from 'cloudflare:workers';
-import { describe, expect, it } from 'vitest';
-import { seedClassRule, seedDgEntry } from './helpers/seed';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { markSyntheticDatasetReady, seedClassRule, seedDgEntry } from './helpers/seed';
 
 // Synthetic UN numbers, classes and rules for testing only. These have no
 // regulatory meaning and must never be seeded into a production migration.
@@ -39,6 +39,14 @@ function postRawBody(rawBody: string): Promise<Response> {
 }
 
 describe('POST /segregation/check', () => {
+  // All tests in this file exercise normal, ready-dataset behavior — the
+  // dedicated DATASET_NOT_READY gate tests live in
+  // segregation-check-dataset-not-ready.test.ts, which needs an isolated,
+  // never-marked-ready D1 instance.
+  beforeAll(async () => {
+    await markSyntheticDatasetReady(env.DB);
+  });
+
   describe('request handling', () => {
     it('normalizes prefixed and unprefixed UN input and returns 200', async () => {
       const left = nextUnNumber();

@@ -1,3 +1,4 @@
+import { getDatasetStatus } from './data/dataset-status';
 import { findDgEntriesByUnNumber } from './data/dg-entries';
 import { loadSegregationRuleSet } from './data/segregation-rules';
 import { aggregateSegregationDecisions } from './domain/aggregate-decision';
@@ -45,6 +46,16 @@ async function handleSegregationCheck(request: Request, env: Env): Promise<Respo
   const rightUnNumber = normalizeUnNumber(parsedBody.rightUnNumber);
   if (leftUnNumber === null || rightUnNumber === null) {
     return errorResponse(400, 'INVALID_REQUEST', '"leftUnNumber" and "rightUnNumber" must be valid UN numbers.');
+  }
+
+  try {
+    const datasetStatus = await getDatasetStatus(env.DB);
+    if (!datasetStatus.ready) {
+      return errorResponse(503, 'DATASET_NOT_READY', 'Segregation dataset is not available.');
+    }
+  } catch (error) {
+    console.error('Failed to check dataset readiness', error);
+    return errorResponse(500, 'INTERNAL_ERROR', 'Unable to complete segregation check.');
   }
 
   let leftEntries: DgEntry[];
@@ -111,11 +122,16 @@ export default {
 
     if (url.pathname === '/health') {
       try {
-        await env.DB.prepare('SELECT 1').first();
+        const datasetStatus = await getDatasetStatus(env.DB);
         return Response.json({
           ok: true,
           service: 'dg-segregation-api',
           database: 'ok',
+          dataset: {
+            ready: datasetStatus.ready,
+            schemaVersion: datasetStatus.schemaVersion,
+            version: datasetStatus.datasetVersion,
+          },
         });
       } catch {
         return Response.json(
