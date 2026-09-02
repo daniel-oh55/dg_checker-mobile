@@ -19,6 +19,14 @@ pnpm install
 pnpm --filter mobile start
 ```
 
+By default the app talks to the production Worker at
+`https://dg-segregation-api.baseballmeng.workers.dev`. For local development
+against a Worker running elsewhere, override with:
+
+```bash
+EXPO_PUBLIC_API_BASE_URL=http://<your-dev-host>:8787 pnpm --filter mobile start
+```
+
 ## Worker (Cloudflare)
 
 ```bash

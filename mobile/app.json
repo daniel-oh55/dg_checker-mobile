@@ -22,7 +22,7 @@
       "favicon": "./assets/favicon.png"
     },
     "extra": {
-      "apiBaseUrl": "http://localhost:8787"
+      "apiBaseUrl": "https://dg-segregation-api.baseballmeng.workers.dev"
     }
   }
 }
