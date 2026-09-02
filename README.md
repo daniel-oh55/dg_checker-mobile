@@ -31,6 +31,18 @@ pnpm --filter worker dev
 pnpm --filter worker run migrate:local
 ```
 
+## Production backend (Cloudflare)
+
+```bash
+# apply committed migrations to the remote D1 database
+pnpm --filter worker exec wrangler d1 migrations apply dg-segregation-db --remote
+
+# deploy the Worker
+pnpm --filter worker exec wrangler deploy
+```
+
+Production health check: `https://dg-segregation-api.<account>.workers.dev/health`
+
 ## Check
 
 ```bash
