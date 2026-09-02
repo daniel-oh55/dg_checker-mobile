@@ -1,9 +1,41 @@
 import { describe, expect, it } from 'vitest';
-import { DatasetValidationError, buildSql, summarizeDataset, validateDataset } from '../scripts/dataset-import.mjs';
+import {
+  DatasetValidationError,
+  INSERT_BATCH_SIZE,
+  buildSql,
+  summarizeDataset,
+  validateDataset,
+} from '../scripts/dataset-import.mjs';
 import { syntheticDataset } from './fixtures/dataset.synthetic';
 
 function cloneFixture(): typeof syntheticDataset {
   return JSON.parse(JSON.stringify(syntheticDataset));
+}
+
+function buildSyntheticDgEntries(count: number) {
+  return Array.from({ length: count }, (_, i) => {
+    const unNumber = String(1000 + i).padStart(4, '0');
+    return {
+      unNumber,
+      variantKey: 'A',
+      primaryClass: 'TEST_A',
+      subsidiaryRisks: [],
+      segregationGroups: [],
+      segregationCodes: [],
+      compatibilityGroup: null,
+    };
+  });
+}
+
+function buildSyntheticClassRules(count: number) {
+  return Array.from({ length: count }, (_, i) => {
+    const suffix = String(i).padStart(4, '0');
+    return {
+      classA: `TEST_A${suffix}`,
+      classB: `TEST_B${suffix}`,
+      level: i % 5,
+    };
+  });
 }
 
 describe('validateDataset — valid data', () => {
@@ -132,5 +164,56 @@ describe('buildSql', () => {
     expect(sql).toContain("'9004', 'A''B', 'TEST_A'");
     expect(sql).toContain("'GROUP''X'");
     expect(sql).toContain("'dataset_version', 'synthetic-o''brien-v1'");
+  });
+
+  it('does not emit explicit transaction statements', () => {
+    const dataset = validateDataset(cloneFixture());
+    const sql = buildSql(dataset);
+
+    expect(sql).not.toMatch(/BEGIN TRANSACTION/);
+    expect(sql).not.toMatch(/\bCOMMIT;/);
+  });
+
+  it('splits a production-sized dg_entries snapshot into multiple batches', () => {
+    const entryCount = INSERT_BATCH_SIZE * 2 + 5;
+    const dataset = validateDataset({
+      schemaVersion: 1,
+      datasetVersion: 'synthetic-large-v1',
+      dgEntries: buildSyntheticDgEntries(entryCount),
+      classRules: [],
+    });
+
+    const sql = buildSql(dataset);
+    const insertMatches = sql.match(/INSERT INTO dg_entries/g) ?? [];
+    expect(insertMatches).toHaveLength(3);
+
+    for (let i = 1000; i < 1000 + entryCount; i++) {
+      expect(sql).toContain(`'${String(i).padStart(4, '0')}'`);
+    }
+
+    expect(buildSql(validateDataset(cloneFixture()))).toBe(buildSql(validateDataset(cloneFixture())));
+    expect(buildSql(dataset)).toBe(sql);
+  });
+
+  it('splits a production-sized class rule snapshot into multiple batches', () => {
+    const ruleCount = INSERT_BATCH_SIZE * 2 + 5;
+    const dataset = validateDataset({
+      schemaVersion: 1,
+      datasetVersion: 'synthetic-large-rules-v1',
+      dgEntries: [],
+      classRules: buildSyntheticClassRules(ruleCount),
+    });
+
+    const sql = buildSql(dataset);
+    const insertMatches = sql.match(/INSERT INTO segregation_class_rules/g) ?? [];
+    expect(insertMatches).toHaveLength(3);
+
+    for (let i = 0; i < ruleCount; i++) {
+      const suffix = String(i).padStart(4, '0');
+      expect(sql).toContain(`'TEST_A${suffix}'`);
+      expect(sql).toContain(`'TEST_B${suffix}'`);
+    }
+
+    expect(buildSql(dataset)).toBe(sql);
   });
 });
