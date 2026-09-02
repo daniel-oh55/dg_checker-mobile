@@ -22,6 +22,7 @@ export interface SegregationCheckResult {
 export type SegregationCheckErrorCode =
   | 'INVALID_REQUEST'
   | 'DG_NOT_FOUND'
+  | 'DATASET_NOT_READY'
   | 'INTERNAL_ERROR'
   | 'NETWORK_ERROR';
 
@@ -77,6 +78,13 @@ export async function checkSegregation(
 
     if (response.status === 400) {
       throw new SegregationCheckError('INVALID_REQUEST', 'Check the UN numbers and try again.');
+    }
+
+    if (response.status === 503 && code === 'DATASET_NOT_READY') {
+      throw new SegregationCheckError(
+        'DATASET_NOT_READY',
+        'The segregation dataset is not available yet. Please try again later.',
+      );
     }
 
     throw new SegregationCheckError('INTERNAL_ERROR', 'Unable to complete the check. Please try again.');
