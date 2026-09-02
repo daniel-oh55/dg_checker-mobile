@@ -275,8 +275,10 @@ describe('POST /segregation/check', () => {
 
       const response = await post({ leftUnNumber: left, rightUnNumber: right });
 
-      const body = (await response.json()) as { decision: { status: string; level: number | null } };
-      expect(body.decision).toEqual({ status: 'CLEAR', level: 0, reason: expect.any(String) });
+      const body = (await response.json()) as { decision: { status: string; level: number | null; reason: string } };
+      expect(body.decision.status).toBe('CLEAR');
+      expect(body.decision.level).toBe(0);
+      expect(body.decision.reason).toBe('All DG variant combinations produce the same clear segregation outcome.');
     });
 
     it('aggregates to SEGREGATION_REQUIRED when all variant combinations agree on the same level', async () => {
@@ -291,9 +293,32 @@ describe('POST /segregation/check', () => {
 
       const response = await post({ leftUnNumber: left, rightUnNumber: right });
 
-      const body = (await response.json()) as { decision: { status: string; level: number | null } };
+      const body = (await response.json()) as { decision: { status: string; level: number | null; reason: string } };
       expect(body.decision.status).toBe('SEGREGATION_REQUIRED');
       expect(body.decision.level).toBe(2);
+      expect(body.decision.reason).toBe('All DG variant combinations require segregation level 2.');
+    });
+
+    it('aggregates to a variant-safe reason when different variant classes agree on the same level', async () => {
+      const left = nextUnNumber();
+      const right = nextUnNumber();
+      const classA = nextClass('A');
+      const classB = nextClass('B');
+      const classC = nextClass('C');
+      await seedDgEntry(env.DB, { unNumber: left, variantKey: 'a', primaryClass: classA });
+      await seedDgEntry(env.DB, { unNumber: left, variantKey: 'b', primaryClass: classC });
+      await seedDgEntry(env.DB, { unNumber: right, variantKey: 'a', primaryClass: classB });
+      await seedClassRule(env.DB, classA, classB, 2);
+      await seedClassRule(env.DB, classC, classB, 2);
+
+      const response = await post({ leftUnNumber: left, rightUnNumber: right });
+
+      const body = (await response.json()) as { decision: { status: string; level: number | null; reason: string } };
+      expect(body.decision.status).toBe('SEGREGATION_REQUIRED');
+      expect(body.decision.level).toBe(2);
+      expect(body.decision.reason).toBe('All DG variant combinations require segregation level 2.');
+      expect(body.decision.reason).not.toContain(classA);
+      expect(body.decision.reason).not.toContain(classC);
     });
 
     it('aggregates to REVIEW_REQUIRED when variants disagree between CLEAR and SEGREGATION_REQUIRED', async () => {

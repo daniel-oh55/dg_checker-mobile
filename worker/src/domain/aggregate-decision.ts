@@ -5,8 +5,11 @@ import type { SegregationDecision } from './segregation';
  * DgEntry variant pair (the Cartesian product of left variants x right
  * variants) into a single decision. Pure — no I/O.
  *
- * - If every decision has the same status and level, that decision is
- *   returned as-is.
+ * - If every decision has the same status and level, that status and level
+ *   are preserved, but the reason is a generic variant-safe statement — the
+ *   caller only supplied a UN number, so the actual variant is unresolved
+ *   and a reason naming one specific class pair would misleadingly imply
+ *   that variant is the one in effect.
  * - If any decision is REVIEW_REQUIRED, the aggregate is REVIEW_REQUIRED
  *   (fail-closed).
  * - If decisions disagree (different status and/or level), the aggregate
@@ -37,5 +40,21 @@ export function aggregateSegregationDecisions(
     };
   }
 
-  return first;
+  if (rest.length === 0) {
+    return first;
+  }
+
+  if (first.status === 'SEGREGATION_REQUIRED') {
+    return {
+      status: 'SEGREGATION_REQUIRED',
+      level: first.level,
+      reason: `All DG variant combinations require segregation level ${first.level}.`,
+    };
+  }
+
+  return {
+    status: 'CLEAR',
+    level: 0,
+    reason: 'All DG variant combinations produce the same clear segregation outcome.',
+  };
 }
