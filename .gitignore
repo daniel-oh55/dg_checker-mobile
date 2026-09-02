@@ -10,6 +10,10 @@ worker/.wrangler
 worker/worker-configuration.d.ts
 .dev.vars
 
+# Private/authorized dataset — never committed
+worker/private-data/
+worker/generated-data/
+
 # Logs
 *.log
 npm-debug.log*
