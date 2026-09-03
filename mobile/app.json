@@ -5,11 +5,16 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
+    "scheme": "dgsegregation",
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true
     },
     "android": {
+      "package": "com.hymlounge.segregationchecker",
+      "versionCode": 1,
+      "permissions": ["android.permission.INTERNET"],
+      "blockedPermissions": ["com.google.android.gms.permission.AD_ID"],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
