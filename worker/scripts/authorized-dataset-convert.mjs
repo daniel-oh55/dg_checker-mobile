@@ -206,7 +206,7 @@ export function createVariantKeyAssigner() {
 }
 
 export function classifyMatrixValue(rawValue) {
-  if (typeof rawValue === 'number' && Number.isInteger(rawValue) && rawValue >= 0 && rawValue <= 4) {
+  if (typeof rawValue === 'number' && Number.isInteger(rawValue) && rawValue >= 1 && rawValue <= 4) {
     return { type: 'numeric', level: rawValue };
   }
   if (rawValue === 'X') return { type: 'X' };

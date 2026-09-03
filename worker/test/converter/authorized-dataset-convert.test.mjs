@@ -235,6 +235,23 @@ describe('classifyMatrixValue / buildOrdinaryClassRules — SEG.TABLE matrix pol
     assert.deepEqual(classifyMatrixValue('X'), { type: 'X' });
     assert.deepEqual(classifyMatrixValue('*'), { type: 'star' });
   });
+
+  it('accepts numeric matrix levels 1-4 (the full authorized-source range)', () => {
+    for (const level of [1, 2, 3, 4]) {
+      assert.deepEqual(classifyMatrixValue(level), { type: 'numeric', level });
+    }
+  });
+
+  it('does NOT classify 0 as numeric — there is no source legend establishing matrix value 0 as CLEAR', () => {
+    const classified = classifyMatrixValue(0);
+    assert.notEqual(classified.type, 'numeric');
+    assert.deepEqual(classified, { type: 'other', raw: 0 });
+  });
+
+  it('fails closed on an ordinary submatrix containing 0 rather than generating a level-0 rule', () => {
+    const getCell = allClearMatrix({ '3|8': 0, '8|3': 0 });
+    assert.throws(() => buildOrdinaryClassRules(getCell), /Unexpected segregation matrix value/);
+  });
 });
 
 describe('validateMatrixSymmetry', () => {
