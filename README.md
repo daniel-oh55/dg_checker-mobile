@@ -27,6 +27,29 @@ against a Worker running elsewhere, override with:
 EXPO_PUBLIC_API_BASE_URL=http://<your-dev-host>:8787 pnpm --filter mobile start
 ```
 
+## Android release builds (EAS)
+
+Android application ID: `com.hymlounge.segregationchecker` (final).
+Build profiles live in [mobile/eas.json](mobile/eas.json).
+
+One-time setup — requires the project owner's Expo account:
+
+```bash
+npm install -g eas-cli
+eas login
+cd mobile && eas init      # links the project and writes extra.eas.projectId
+```
+
+Builds (run from `mobile/`):
+
+```bash
+eas build --platform android --profile preview      # installable APK for device QA
+eas build --platform android --profile production   # AAB for Google Play
+```
+
+`versionCode` is read from `mobile/app.json` (`cli.appVersionSource: "local"`),
+so bump it there for each Play upload.
+
 ## Worker (Cloudflare)
 
 ```bash
