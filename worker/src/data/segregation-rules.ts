@@ -1,37 +1,32 @@
 import { createSegregationRuleSet } from '../domain/segregation';
 import type { SegregationLevel, SegregationRuleEntry, SegregationRuleSet } from '../domain/segregation';
 
-function canonicalPair(classA: string, classB: string): readonly [string, string] {
-  return classA <= classB ? [classA, classB] : [classB, classA];
+interface ClassRuleRow {
+  class_a: string;
+  class_b: string;
+  level: SegregationLevel;
 }
 
 /**
- * Loads the general class-pair segregation rules required to evaluate the
- * given class pairs, and builds a SegregationRuleSet from them. Pairs not
- * present in `segregation_class_rules` are simply absent from the returned
- * set — the pure engine already treats an absent pair as REVIEW_REQUIRED.
+ * Loads the complete class-pair segregation rule table and builds a
+ * SegregationRuleSet from it.
+ *
+ * The engine no longer touches only the primary <-> primary pair: it also
+ * evaluates subsidiary-risk axes, Class 1 normalized group rows, and
+ * AS_FOR_CLASS substituted targets, so the set of pairs a single check needs
+ * is not knowable before evaluation starts. The authorized table is on the
+ * order of ~150 rows, so loading it whole is both simpler and safer than
+ * predicting which pairs will be reached — a mispredicted pair would look
+ * absent, and absence is what routes a pair to REVIEW_REQUIRED.
+ *
+ * Pairs genuinely absent from `segregation_class_rules` (the "*" Class 1 <->
+ * Class 1 cells) stay absent from the returned set, which the pure engine
+ * already treats as fail-closed.
  */
-export async function loadSegregationRuleSet(
-  db: D1Database,
-  classPairs: ReadonlyArray<readonly [string, string]>,
-): Promise<SegregationRuleSet> {
-  const uniquePairs = new Map<string, readonly [string, string]>();
-  for (const [classA, classB] of classPairs) {
-    const pair = canonicalPair(classA, classB);
-    uniquePairs.set(pair.join('|'), pair);
-  }
+export async function loadSegregationRuleSet(db: D1Database): Promise<SegregationRuleSet> {
+  const result = await db.prepare('SELECT class_a, class_b, level FROM segregation_class_rules').all<ClassRuleRow>();
 
-  const entries: SegregationRuleEntry[] = [];
-  for (const [classA, classB] of uniquePairs.values()) {
-    const row = await db
-      .prepare('SELECT level FROM segregation_class_rules WHERE class_a = ? AND class_b = ?')
-      .bind(classA, classB)
-      .first<{ level: SegregationLevel }>();
-
-    if (row !== null) {
-      entries.push([classA, classB, row.level]);
-    }
-  }
+  const entries: SegregationRuleEntry[] = result.results.map((row) => [row.class_a, row.class_b, row.level]);
 
   return createSegregationRuleSet(entries);
 }

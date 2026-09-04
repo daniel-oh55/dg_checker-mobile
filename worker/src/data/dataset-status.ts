@@ -9,7 +9,8 @@ interface AppMetadataRow {
   value: string;
 }
 
-const READY_SCHEMA_VERSION = '1';
+const SCHEMA_VERSION_V1 = '1';
+const SCHEMA_VERSION_V2 = '2';
 
 /**
  * Reports whether the service currently has a usable segregation dataset.
@@ -17,14 +18,28 @@ const READY_SCHEMA_VERSION = '1';
  * missing UN number in an otherwise-ready dataset, which callers must
  * handle separately. Metadata being absent is a normal, expected state and
  * never throws — only real D1 failures propagate, so callers can return 500.
+ *
+ * Two schema versions are recognized, so migrating, importing and deploying
+ * can be staged without a window where the service is unavailable:
+ *
+ * - v1 has no sg_rules content. It stays serviceable under this Worker, and
+ *   stays fail-closed: with no SG rules loaded, every entry that carries an
+ *   SG code resolves to an UNKNOWN_SG_CODE blocker and therefore
+ *   REVIEW_REQUIRED. It can never silently answer CLEAR for a pair whose
+ *   provisions have not been imported.
+ * - v2 additionally requires sg_rules to be populated. An empty sg_rules
+ *   table is never accepted as a valid v2 dataset, so a half-finished
+ *   v2 import reports not-ready instead of quietly serving an engine with no
+ *   special provisions.
  */
 export async function getDatasetStatus(db: D1Database): Promise<DatasetStatus> {
-  const [metadataResult, dgEntryResult, classRuleResult] = await db.batch<Record<string, unknown>>([
+  const [metadataResult, dgEntryResult, classRuleResult, sgRuleResult] = await db.batch<Record<string, unknown>>([
     db.prepare(
       `SELECT key, value FROM app_metadata WHERE key IN ('dataset_schema_version', 'dataset_version')`,
     ),
     db.prepare('SELECT 1 FROM dg_entries LIMIT 1'),
     db.prepare('SELECT 1 FROM segregation_class_rules LIMIT 1'),
+    db.prepare('SELECT 1 FROM sg_rules LIMIT 1'),
   ]);
 
   const metadata = new Map(
@@ -35,13 +50,14 @@ export async function getDatasetStatus(db: D1Database): Promise<DatasetStatus> {
 
   const hasDgEntries = dgEntryResult.results.length > 0;
   const hasClassRules = classRuleResult.results.length > 0;
+  const hasSgRules = sgRuleResult.results.length > 0;
+
+  const coreReady =
+    typeof datasetVersion === 'string' && datasetVersion.length > 0 && hasDgEntries && hasClassRules;
 
   const ready =
-    schemaVersion === READY_SCHEMA_VERSION &&
-    typeof datasetVersion === 'string' &&
-    datasetVersion.length > 0 &&
-    hasDgEntries &&
-    hasClassRules;
+    coreReady &&
+    ((schemaVersion === SCHEMA_VERSION_V1) || (schemaVersion === SCHEMA_VERSION_V2 && hasSgRules));
 
   return { ready, schemaVersion, datasetVersion };
 }

@@ -254,7 +254,9 @@ describe('POST /segregation/check', () => {
       expect(body.decision.level).toBeNull();
     });
 
-    it('returns REVIEW_REQUIRED when an entry has a compatibility group', async () => {
+    it('does not force review for a compatibility group on a non-Class-1 entry', async () => {
+      // A compatibility letter is recorded but never used to decide a level,
+      // and its mere presence no longer blocks an otherwise-resolvable pair.
       const left = nextUnNumber();
       const right = nextUnNumber();
       const classA = nextClass('A');
@@ -266,8 +268,23 @@ describe('POST /segregation/check', () => {
 
       expect(response.status).toBe(200);
       const body = (await response.json()) as { decision: { status: string; level: number | null } };
+      expect(body.decision.status).toBe('CLEAR');
+      expect(body.decision.level).toBe(0);
+    });
+
+    it('returns REVIEW_REQUIRED for a Class 1 <-> Class 1 pair', async () => {
+      const left = nextUnNumber();
+      const right = nextUnNumber();
+      await seedDgEntry(env.DB, { unNumber: left, variantKey: 'a', primaryClass: '1.1', compatibilityGroup: 'D' });
+      await seedDgEntry(env.DB, { unNumber: right, variantKey: 'a', primaryClass: '1.4', compatibilityGroup: 'S' });
+
+      const response = await post({ leftUnNumber: left, rightUnNumber: right });
+
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as { decision: { status: string; level: number | null; reason: string } };
       expect(body.decision.status).toBe('REVIEW_REQUIRED');
       expect(body.decision.level).toBeNull();
+      expect(body.decision.reason).toContain('CLASS1_TO_CLASS1_UNRESOLVED');
     });
   });
 
@@ -329,7 +346,7 @@ describe('POST /segregation/check', () => {
       expect(body.decision.reason).not.toContain(classC);
     });
 
-    it('aggregates to REVIEW_REQUIRED when variants disagree between CLEAR and SEGREGATION_REQUIRED', async () => {
+    it('keeps the strictest result when variants disagree between CLEAR and SEGREGATION_REQUIRED', async () => {
       const left = nextUnNumber();
       const right = nextUnNumber();
       const classA = nextClass('A');
@@ -343,12 +360,18 @@ describe('POST /segregation/check', () => {
 
       const response = await post({ leftUnNumber: left, rightUnNumber: right });
 
-      const body = (await response.json()) as { decision: { status: string; level: number | null } };
-      expect(body.decision.status).toBe('REVIEW_REQUIRED');
-      expect(body.decision.level).toBeNull();
+      const body = (await response.json()) as {
+        decision: { status: string; level: number | null; reason: string };
+        variantResolution: string;
+      };
+      expect(body.decision.status).toBe('SEGREGATION_REQUIRED');
+      expect(body.decision.level).toBe(2);
+      expect(body.variantResolution).toBe('STRICTEST_OF_MULTIPLE_VARIANTS');
+      expect(body.decision.reason).toContain('strictest');
+      expect(body.decision.reason).not.toContain('All DG variant combinations');
     });
 
-    it('aggregates to REVIEW_REQUIRED when variants disagree on segregation level', async () => {
+    it('keeps the strictest result when variants disagree on segregation level', async () => {
       const left = nextUnNumber();
       const right = nextUnNumber();
       const classA = nextClass('A');
@@ -362,9 +385,29 @@ describe('POST /segregation/check', () => {
 
       const response = await post({ leftUnNumber: left, rightUnNumber: right });
 
-      const body = (await response.json()) as { decision: { status: string; level: number | null } };
-      expect(body.decision.status).toBe('REVIEW_REQUIRED');
-      expect(body.decision.level).toBeNull();
+      const body = (await response.json()) as {
+        decision: { status: string; level: number | null };
+        variantResolution: string;
+      };
+      expect(body.decision.status).toBe('SEGREGATION_REQUIRED');
+      expect(body.decision.level).toBe(3);
+      expect(body.variantResolution).toBe('STRICTEST_OF_MULTIPLE_VARIANTS');
+    });
+
+    it('reports UNIFORM when every variant combination agrees', async () => {
+      const left = nextUnNumber();
+      const right = nextUnNumber();
+      const classA = nextClass('A');
+      const classB = nextClass('B');
+      await seedDgEntry(env.DB, { unNumber: left, variantKey: 'a', primaryClass: classA });
+      await seedDgEntry(env.DB, { unNumber: left, variantKey: 'b', primaryClass: classA });
+      await seedDgEntry(env.DB, { unNumber: right, variantKey: 'a', primaryClass: classB });
+      await seedClassRule(env.DB, classA, classB, 2);
+
+      const response = await post({ leftUnNumber: left, rightUnNumber: right });
+
+      const body = (await response.json()) as { variantResolution: string };
+      expect(body.variantResolution).toBe('UNIFORM');
     });
 
     it('aggregates to REVIEW_REQUIRED when any variant combination requires review', async () => {

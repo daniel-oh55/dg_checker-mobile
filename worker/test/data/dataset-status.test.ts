@@ -11,6 +11,7 @@ async function resetDatasetState(): Promise<void> {
     env.DB.prepare(`DELETE FROM app_metadata WHERE key IN ('dataset_schema_version', 'dataset_version')`),
     env.DB.prepare('DELETE FROM dg_entries'),
     env.DB.prepare('DELETE FROM segregation_class_rules'),
+    env.DB.prepare('DELETE FROM sg_rules'),
   ]);
 }
 
@@ -37,7 +38,15 @@ async function insertDgEntryRow(): Promise<void> {
 
 async function insertClassRuleRow(): Promise<void> {
   await env.DB.prepare(
-    `INSERT INTO segregation_class_rules (class_a, class_b, level) VALUES ('TEST_STATUS', 'TEST_STATUS', 0)`,
+    `INSERT INTO segregation_class_rules (class_a, class_b, level, source_token)
+     VALUES ('TEST_STATUS', 'TEST_STATUS', 0, 'X')`,
+  ).run();
+}
+
+async function insertSgRuleRow(): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO sg_rules (code, rule_type, targets_json, level, source_text)
+     VALUES ('SG9999', 'REVIEW_ONLY', '[]', NULL, 'synthetic status-check row')`,
   ).run();
 }
 
@@ -86,8 +95,41 @@ describe('getDatasetStatus', () => {
     expect(status.ready).toBe(false);
   });
 
-  it('is not ready when schemaVersion is not "1"', async () => {
-    await setMetadata('2', 'synthetic-status-v1');
+  it('is not ready for an unrecognized schema version', async () => {
+    await setMetadata('3', 'synthetic-status-v1');
+    await insertDgEntryRow();
+    await insertClassRuleRow();
+    await insertSgRuleRow();
+
+    const status = await getDatasetStatus(env.DB);
+    expect(status.ready).toBe(false);
+    expect(status.schemaVersion).toBe('3');
+  });
+
+  it('is ready for transitional schema v1 with DG rows and class rules', async () => {
+    // v1 predates sg_rules. It stays serviceable, and stays fail-closed: with
+    // no SG rules loaded, any entry carrying an SG code resolves to
+    // UNKNOWN_SG_CODE and therefore REVIEW_REQUIRED.
+    await setMetadata('1', 'synthetic-status-v1');
+    await insertDgEntryRow();
+    await insertClassRuleRow();
+
+    const status = await getDatasetStatus(env.DB);
+    expect(status).toEqual({ ready: true, schemaVersion: '1', datasetVersion: 'synthetic-status-v1' });
+  });
+
+  it('is ready for schema v2 once sg_rules is populated', async () => {
+    await setMetadata('2', 'synthetic-status-v2');
+    await insertDgEntryRow();
+    await insertClassRuleRow();
+    await insertSgRuleRow();
+
+    const status = await getDatasetStatus(env.DB);
+    expect(status).toEqual({ ready: true, schemaVersion: '2', datasetVersion: 'synthetic-status-v2' });
+  });
+
+  it('never accepts an empty sg_rules table as a valid v2 dataset', async () => {
+    await setMetadata('2', 'synthetic-status-v2');
     await insertDgEntryRow();
     await insertClassRuleRow();
 
@@ -96,13 +138,12 @@ describe('getDatasetStatus', () => {
     expect(status.schemaVersion).toBe('2');
   });
 
-  it('is ready with valid metadata, DG rows, and rules', async () => {
+  it('does not require sg_rules for v1 readiness', async () => {
     await setMetadata('1', 'synthetic-status-v1');
     await insertDgEntryRow();
     await insertClassRuleRow();
 
-    const status = await getDatasetStatus(env.DB);
-    expect(status).toEqual({ ready: true, schemaVersion: '1', datasetVersion: 'synthetic-status-v1' });
+    expect((await getDatasetStatus(env.DB)).ready).toBe(true);
   });
 });
 
