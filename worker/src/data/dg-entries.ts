@@ -66,3 +66,40 @@ export async function findDgEntriesByUnNumber(db: D1Database, unNumber: string):
 
   return result.results.map(mapRow);
 }
+
+/**
+ * Loads every DgEntry variant for a batch of canonical (already normalized,
+ * already distinct) UN numbers with a single `WHERE un_number IN (...)`
+ * query, so a batch request never issues one DB round trip per UN number.
+ *
+ * The returned map has one entry per input UN number, in caller-independent
+ * (Map insertion) order matching `unNumbers`; a UN number with no persisted
+ * entries maps to an empty array rather than being omitted, so callers can
+ * detect "not found" without a separate existence check.
+ */
+export async function findDgEntriesByUnNumbers(
+  db: D1Database,
+  unNumbers: readonly string[],
+): Promise<Map<string, DgEntry[]>> {
+  const grouped = new Map<string, DgEntry[]>();
+  for (const unNumber of unNumbers) {
+    grouped.set(unNumber, []);
+  }
+
+  const placeholders = unNumbers.map(() => '?').join(', ');
+  const result = await db
+    .prepare(
+      `SELECT un_number, variant_key, primary_class, subsidiary_risks_json, segregation_groups_json, segregation_codes_json, compatibility_group
+       FROM dg_entries
+       WHERE un_number IN (${placeholders})`,
+    )
+    .bind(...unNumbers)
+    .all<DgEntryRow>();
+
+  for (const row of result.results) {
+    const entry = mapRow(row);
+    grouped.get(entry.unNumber)?.push(entry);
+  }
+
+  return grouped;
+}

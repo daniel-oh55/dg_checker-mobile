@@ -204,7 +204,75 @@ variantResolution: "UNIFORM" | "STRICTEST_OF_MULTIPLE_VARIANTS"
 ```
 
 Nothing is renamed or removed, so an older client that ignores the new fields
-still parses ordinary responses. Batch input is not implemented.
+still parses ordinary responses.
+
+### `POST /segregation/check-batch`
+
+Evaluates every unordered pair among 2–10 UN numbers in one request, using the
+exact same engine and aggregation as `/segregation/check` — a pair evaluated
+inside a batch produces the identical `decision`, `additionalRequirements`,
+`variantResolution` and variant counts as the same pair evaluated directly.
+`worker/src/domain/evaluate-un-pair.ts` (`evaluateResolvedUnPair`) is the
+shared helper both endpoints call, so there is exactly one implementation of
+"evaluate one resolved UN pair" to keep in sync.
+
+```
+{ "unNumbers": ["1002", "1088", "1993", "1006"] }
+```
+
+- **Count**: 2–10 items, inclusive.
+- **Normalization**: each item is normalized with the existing
+  `normalizeUnNumber()` (so `"UN1002"`, `"1002"`, and `"4"` → `"0004"` all
+  resolve the usual way).
+- **Distinctness**: normalized UN numbers must be distinct. Duplicate input
+  (including inputs that only collide after normalization, e.g. `"4"` and
+  `"0004"`) is rejected with `400 DUPLICATE_UN_NUMBER` and the canonical
+  duplicate(s) — it is never silently deduplicated, because a repeated input
+  UN number would otherwise produce indistinguishable duplicate pair rows and
+  misleading pair counts. The existing `/segregation/check` endpoint is
+  unaffected and still allows a UN number checked against itself.
+- **Missing DG data**: if any requested UN number has zero entries, the whole
+  request fails with `404 DG_NOT_FOUND` and every missing canonical UN number
+  in request order; no partial pair evaluation happens.
+- **Dataset readiness / DB access**: `getDatasetStatus()` is checked once per
+  request (not once per pair), DG entries for every requested UN number are
+  loaded with a single `WHERE un_number IN (...)` query
+  (`findDgEntriesByUnNumbers`), and the class-rule and SG-rule tables are each
+  loaded once and reused across every pair — never once per pair.
+
+**Pair generation**: for `N` distinct inputs, every unordered pair `(i, j)`
+with `i < j` in input order is generated exactly once (`N` choose `2`; 10
+inputs → 45 pairs). Reverse duplicates (`B↔A` when `A↔B` already exists) and
+self-pairs are never generated. Pairs are returned in that same deterministic
+input order (`A↔B, A↔C, ..., B↔C, ...`), not sorted by severity — that is left
+to the client's presentation layer.
+
+Each pair result carries only the minimum decision contract — `leftUnNumber`,
+`rightUnNumber`, `decision`, `variants`, `additionalRequirements`,
+`variantResolution` — never `sourceText`, proprietary SG prose, full DGL rows,
+`variantKey`, or internal database IDs.
+
+**Summary** is counts only, never a single collapsed batch-wide level:
+
+```
+summary: {
+  inputCount, totalPairs,
+  segregationRequiredPairs, reviewRequiredPairs, noSegregationLevelPairs,
+  additionalRequirementPairs,
+  maxRequiredLevel
+}
+```
+
+`noSegregationLevelPairs` counts `CLEAR` (level 0) decisions and must never be
+read as "safe" or "mixable" — a level-0 pair can still carry a non-empty
+`additionalRequirements` list (see above), which
+`additionalRequirementPairs` tracks independently of `decision.status`.
+`maxRequiredLevel` is the maximum level among `SEGREGATION_REQUIRED` pairs
+only, and stays `null` — never fabricated as `0` — when no pair is
+`SEGREGATION_REQUIRED`.
+
+This PR ships the batch contract and mobile API client/types only; the mobile
+UI for entering 2–10 UN numbers is a later PR.
 
 ## Production activation
 
