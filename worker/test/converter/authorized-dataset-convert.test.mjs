@@ -6,17 +6,23 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  ALL_MATRIX_LABELS,
+  CLASS1_MATRIX_LABELS,
   ORDINARY_CLASSES,
-  buildOrdinaryClassRules,
+  buildClassRules,
   classifyMatrixValue,
   convertDglSheet,
+  convertSgSheet,
   createVariantKeyAssigner,
   extractCellText,
   isContinuationRow,
   normalizeUnNumberCell,
   parsePrimaryClass,
   parseSegregationField,
+  parseSgRow,
   parseSubsidiaryRisks,
+  resolveClassTargets,
+  resolveClassToken,
   validateMatrixSymmetry,
 } from '../../scripts/authorized-dataset-convert.mjs';
 
@@ -133,10 +139,48 @@ describe('parseSubsidiaryRisks — fail-closed subsidiary hazard parsing', () =>
     assert.ok(result.length > 0);
   });
 
-  it('keeps malformed subsidiary content (space-delimited, "P"-suffixed, corrupted dates) non-empty and unresolved', () => {
-    assert.deepEqual(parseSubsidiaryRisks('6.1 P'), ['UNRESOLVED_SOURCE:6.1 P']);
-    assert.deepEqual(parseSubsidiaryRisks('3 8'), ['UNRESOLVED_SOURCE:3 8']);
-    assert.deepEqual(parseSubsidiaryRisks('5.1/8 P'), ['UNRESOLVED_SOURCE:5.1/8 P']);
+  it('splits a whitespace-delimited list', () => {
+    assert.deepEqual(parseSubsidiaryRisks('3 8'), ['3', '8']);
+    assert.deepEqual(parseSubsidiaryRisks('4.3 3'), ['4.3', '3']);
+    assert.deepEqual(parseSubsidiaryRisks('2.1 8'), ['2.1', '8']);
+  });
+
+  it('splits a comma-delimited list', () => {
+    assert.deepEqual(parseSubsidiaryRisks('6.1, 8'), ['6.1', '8']);
+  });
+
+  it('strips a standalone "P" marker instead of losing the hazard class with it', () => {
+    // "P" is an orthogonal marine-pollutant annotation, not a hazard class.
+    assert.deepEqual(parseSubsidiaryRisks('3 P'), ['3']);
+    assert.deepEqual(parseSubsidiaryRisks('8 P'), ['8']);
+    assert.deepEqual(parseSubsidiaryRisks('6.1 P'), ['6.1']);
+    assert.deepEqual(parseSubsidiaryRisks('5.1/8 P'), ['5.1', '8']);
+  });
+
+  it('does not strip a "P" that is part of a larger token', () => {
+    const result = parseSubsidiaryRisks('3 PP');
+    assert.equal(result.length, 1);
+    assert.ok(result[0].startsWith('UNRESOLVED_SOURCE:'));
+  });
+
+  it('deduplicates repeated tokens while preserving source order', () => {
+    assert.deepEqual(parseSubsidiaryRisks('8/6.1/8'), ['8', '6.1']);
+  });
+
+  it('resolves a marker-only cell to no subsidiary risk, since "P" is not a hazard class', () => {
+    // "P" records a marine-pollutant marker against no subsidiary hazard at
+    // all, so no hazard axis is being dropped here. The marker itself has no
+    // row in the segregation matrix and is out of scope for a level.
+    assert.deepEqual(parseSubsidiaryRisks('P'), []);
+    assert.deepEqual(parseSubsidiaryRisks('- P'), []);
+    assert.deepEqual(parseSubsidiaryRisks('– P'), []);
+  });
+
+  it('keeps non-mechanical references and corrupted dates non-empty and unresolved', () => {
+    assert.deepEqual(parseSubsidiaryRisks('See 2.0.6.6'), ['UNRESOLVED_SOURCE:See 2.0.6.6']);
+    assert.deepEqual(parseSubsidiaryRisks('when containing acid'), [
+      'UNRESOLVED_SOURCE:when containing acid',
+    ]);
 
     const dateResult = parseSubsidiaryRisks(new Date('2025-03-08T00:00:00.000Z'));
     assert.equal(dateResult.length, 1);
@@ -187,12 +231,19 @@ describe('isContinuationRow — merged-row detection', () => {
   });
 });
 
-describe('classifyMatrixValue / buildOrdinaryClassRules — SEG.TABLE matrix policy', () => {
-  function allClearMatrix(overrides) {
+describe('classifyMatrixValue / buildClassRules — SEG.TABLE matrix policy', () => {
+  // Structural labels only: the real authorized levels are never asserted here.
+  function matrix(defaultValue, overrides) {
     const values = new Map();
-    for (const a of ORDINARY_CLASSES) {
-      for (const b of ORDINARY_CLASSES) {
-        values.set(`${a}|${b}`, 2);
+    for (const a of ALL_MATRIX_LABELS) {
+      for (const b of ALL_MATRIX_LABELS) {
+        values.set(`${a}|${b}`, defaultValue);
+      }
+    }
+    // Class 1 <-> Class 1 holds "*" in the authorized source.
+    for (const a of CLASS1_MATRIX_LABELS) {
+      for (const b of CLASS1_MATRIX_LABELS) {
+        values.set(`${a}|${b}`, '*');
       }
     }
     for (const [key, value] of Object.entries(overrides ?? {})) {
@@ -201,33 +252,76 @@ describe('classifyMatrixValue / buildOrdinaryClassRules — SEG.TABLE matrix pol
     return (a, b) => values.get(`${a}|${b}`);
   }
 
-  it('generates a ClassRule for numeric 1-4 matrix cells', () => {
-    const getCell = allClearMatrix();
-    const { rules, xPairCount } = buildOrdinaryClassRules(getCell);
-    assert.equal(xPairCount, 0);
-    const expectedPairCount = (ORDINARY_CLASSES.length * (ORDINARY_CLASSES.length + 1)) / 2;
-    assert.equal(rules.length, expectedPairCount);
+  const TOTAL_PAIRS = (ALL_MATRIX_LABELS.length * (ALL_MATRIX_LABELS.length + 1)) / 2;
+  const CLASS1_PAIRS = (CLASS1_MATRIX_LABELS.length * (CLASS1_MATRIX_LABELS.length + 1)) / 2;
+
+  it('covers every unordered pair of the full matrix, not just the ordinary submatrix', () => {
+    const { rules, counts } = buildClassRules(matrix(2));
+
+    assert.equal(rules.length + counts.starOmittedPairs, TOTAL_PAIRS);
+    assert.equal(counts.starOmittedPairs, CLASS1_PAIRS);
     for (const rule of rules) {
       assert.ok(rule.classA <= rule.classB, 'rule must use canonical classA <= classB ordering');
-      assert.equal(rule.level, 2);
     }
   });
 
-  it('omits "X" pairs from classRules and counts them', () => {
-    const getCell = allClearMatrix({ '3|8': 'X', '8|3': 'X' });
-    const { rules, xPairCount } = buildOrdinaryClassRules(getCell);
-    assert.equal(xPairCount, 1);
-    assert.equal(rules.some((r) => r.classA === '3' && r.classB === '8'), false);
+  it('includes Class 1 group <-> ordinary class pairs', () => {
+    const { rules } = buildClassRules(matrix(2));
+    const class1ToOrdinary = rules.filter(
+      (rule) => CLASS1_MATRIX_LABELS.includes(rule.classA) !== CLASS1_MATRIX_LABELS.includes(rule.classB),
+    );
+
+    assert.equal(class1ToOrdinary.length, CLASS1_MATRIX_LABELS.length * ORDINARY_CLASSES.length);
   });
 
-  it('never coerces "*" into a numeric level — it hard-fails the ordinary submatrix', () => {
-    const getCell = allClearMatrix({ '3|8': '*', '8|3': '*' });
-    assert.throws(() => buildOrdinaryClassRules(getCell), /Unexpected '\*'/);
+  it('records a numeric cell with its own source token', () => {
+    const { rules, counts } = buildClassRules(matrix(2, { '3|8': 4, '8|3': 4 }));
+    const rule = rules.find((r) => r.classA === '3' && r.classB === '8');
+
+    assert.deepEqual(rule, { classA: '3', classB: '8', level: 4, sourceToken: '4' });
+    assert.equal(counts.xLevelZeroPairs, 0);
+  });
+
+  it('converts "X" to a level-0 rule with source token "X" rather than omitting the pair', () => {
+    // "X" means the base matrix contributes no numeric level — NOT "stop
+    // evaluating" — so the rule must exist for the engine to build on.
+    const { rules, counts } = buildClassRules(matrix(2, { '3|8': 'X', '8|3': 'X' }));
+    const rule = rules.find((r) => r.classA === '3' && r.classB === '8');
+
+    assert.deepEqual(rule, { classA: '3', classB: '8', level: 0, sourceToken: 'X' });
+    assert.equal(counts.xLevelZeroPairs, 1);
+  });
+
+  it('omits "*" Class 1 <-> Class 1 pairs entirely so they fail closed to review', () => {
+    const { rules, counts } = buildClassRules(matrix(2));
+
+    assert.equal(counts.starOmittedPairs, CLASS1_PAIRS);
+    for (const a of CLASS1_MATRIX_LABELS) {
+      for (const b of CLASS1_MATRIX_LABELS) {
+        const [classA, classB] = a <= b ? [a, b] : [b, a];
+        assert.equal(
+          rules.some((rule) => rule.classA === classA && rule.classB === classB),
+          false,
+          `"*" pair (${classA}, ${classB}) must not produce a rule`,
+        );
+      }
+    }
+  });
+
+  it('never coerces "*" into a numeric level', () => {
+    const { rules } = buildClassRules(matrix(2));
+    assert.equal(rules.some((rule) => rule.sourceToken === '*'), false);
+  });
+
+  it('hard-fails on a "*" found outside the Class 1 <-> Class 1 region', () => {
+    assert.throws(
+      () => buildClassRules(matrix(2, { '3|8': '*', '8|3': '*' })),
+      /Unexpected '\*' outside the Class 1/,
+    );
   });
 
   it('fails on an unknown/unexpected matrix symbol rather than fabricating a rule', () => {
-    const getCell = allClearMatrix({ '3|8': 'Y', '8|3': 'Y' });
-    assert.throws(() => buildOrdinaryClassRules(getCell), /Unexpected segregation matrix value/);
+    assert.throws(() => buildClassRules(matrix(2, { '3|8': 'Y', '8|3': 'Y' })), /Unexpected segregation matrix value/);
   });
 
   it('classifies raw matrix values correctly', () => {
@@ -242,15 +336,14 @@ describe('classifyMatrixValue / buildOrdinaryClassRules — SEG.TABLE matrix pol
     }
   });
 
-  it('does NOT classify 0 as numeric — there is no source legend establishing matrix value 0 as CLEAR', () => {
+  it('does NOT classify 0 as numeric — there is no source legend establishing matrix value 0', () => {
     const classified = classifyMatrixValue(0);
     assert.notEqual(classified.type, 'numeric');
     assert.deepEqual(classified, { type: 'other', raw: 0 });
   });
 
-  it('fails closed on an ordinary submatrix containing 0 rather than generating a level-0 rule', () => {
-    const getCell = allClearMatrix({ '3|8': 0, '8|3': 0 });
-    assert.throws(() => buildOrdinaryClassRules(getCell), /Unexpected segregation matrix value/);
+  it('fails closed on a matrix containing a literal 0 rather than generating a level-0 rule', () => {
+    assert.throws(() => buildClassRules(matrix(2, { '3|8': 0, '8|3': 0 })), /Unexpected segregation matrix value/);
   });
 });
 

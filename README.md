@@ -74,6 +74,17 @@ pnpm --filter worker exec wrangler deploy
 
 Production health check: `https://dg-segregation-api.<account>.workers.dev/health`
 
+## Segregation engine
+
+See [docs/segregation-engine.md](docs/segregation-engine.md) for what the
+engine evaluates, the `REVIEW_REQUIRED` boundaries it deliberately keeps, the
+dataset schema v2 contract, and the production activation order.
+
+The schema v2 engine is **not deployed to production**: the current mobile
+client cannot surface `additionalRequirements`, and a client that ignores that
+field would present a level-0 result as unrestricted while an obligation is
+still outstanding.
+
 ## Check
 
 ```bash
@@ -89,6 +100,9 @@ The production/authorized IMDG dataset is never committed to this repository.
 authorized dataset snapshot there for local use only.
 
 ```bash
+# convert authorized workbooks into a canonical schema v2 snapshot
+pnpm --filter worker dataset:convert --   --dgl private-data/DATA_TABLE_DGL.xlsx   --segregation private-data/Segregation.xlsx   --dataset-version authorized-source-v2   --output private-data/dataset.json
+
 # validate a private dataset snapshot
 pnpm --filter worker dataset:validate -- private-data/dataset.json
 

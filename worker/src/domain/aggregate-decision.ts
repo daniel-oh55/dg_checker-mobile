@@ -1,60 +1,94 @@
-import type { SegregationDecision } from './segregation';
+import { dedupeAdditionalRequirements, reviewReason } from './segregation';
+import type { PairEvaluation, SegregationDecision } from './segregation';
+import type { AdditionalRequirement } from './sg-rules';
 
 /**
- * Conservatively combines the SegregationDecision for every evaluated
- * DgEntry variant pair (the Cartesian product of left variants x right
- * variants) into a single decision. Pure — no I/O.
+ * How the aggregate numeric result relates to the individual variant pairs.
  *
- * - If every decision has the same status and level, that status and level
- *   are preserved, but the reason is a generic variant-safe statement — the
- *   caller only supplied a UN number, so the actual variant is unresolved
- *   and a reason naming one specific class pair would misleadingly imply
- *   that variant is the one in effect.
- * - If any decision is REVIEW_REQUIRED, the aggregate is REVIEW_REQUIRED
- *   (fail-closed).
- * - If decisions disagree (different status and/or level), the aggregate
- *   is REVIEW_REQUIRED — the caller only supplied a UN number, so the
- *   actual variant is unresolved and picking the maximum level would
- *   assert a regulatory outcome that isn't actually known.
+ * - UNIFORM: every evaluated variant pair produced the same outcome.
+ * - STRICTEST_OF_MULTIPLE_VARIANTS: the variant pairs disagreed, and the
+ *   reported result is the strictest of them. Callers must not present this
+ *   as "all variants require this" — the specific variant is unresolved
+ *   because the request only carried UN numbers.
  */
-export function aggregateSegregationDecisions(
-  decisions: readonly [SegregationDecision, ...SegregationDecision[]],
-): SegregationDecision {
-  if (decisions.some((decision) => decision.status === 'REVIEW_REQUIRED')) {
+export type VariantResolution = 'UNIFORM' | 'STRICTEST_OF_MULTIPLE_VARIANTS';
+
+export interface AggregatedEvaluation {
+  readonly decision: SegregationDecision;
+  readonly additionalRequirements: readonly AdditionalRequirement[];
+  readonly variantResolution: VariantResolution;
+}
+
+/**
+ * Combines the PairEvaluation for every evaluated DgEntry variant pair (the
+ * Cartesian product of left variants x right variants) into a single result.
+ * Pure — no I/O.
+ *
+ * - If any variant pair is REVIEW_REQUIRED, the aggregate is REVIEW_REQUIRED
+ *   (fail-closed), and the union of that pair's blockers is reported.
+ * - Otherwise the aggregate takes the maximum numeric level across variant
+ *   pairs. A weaker variant never dilutes a stronger one, and the reason
+ *   states plainly when the shown result is the strictest of several
+ *   differing variants rather than a shared outcome.
+ * - additionalRequirements are unioned and deduplicated across every variant
+ *   pair, including pairs that individually resolved to REVIEW_REQUIRED —
+ *   an obligation found on any variant still has to reach the operator.
+ */
+export function aggregatePairEvaluations(
+  evaluations: readonly [PairEvaluation, ...PairEvaluation[]],
+): AggregatedEvaluation {
+  const additionalRequirements = dedupeAdditionalRequirements(
+    evaluations.flatMap((evaluation) => [...evaluation.additionalRequirements]),
+  );
+
+  const [first, ...rest] = evaluations;
+  const allAgree = rest.every(
+    (evaluation) =>
+      evaluation.decision.status === first.decision.status && evaluation.decision.level === first.decision.level,
+  );
+  const variantResolution: VariantResolution = allAgree ? 'UNIFORM' : 'STRICTEST_OF_MULTIPLE_VARIANTS';
+
+  const reviewing = evaluations.filter((evaluation) => evaluation.decision.status === 'REVIEW_REQUIRED');
+  if (reviewing.length > 0) {
+    const blockers = [...new Set(reviewing.flatMap((evaluation) => [...evaluation.reviewBlockers]))].sort();
     return {
-      status: 'REVIEW_REQUIRED',
-      level: null,
-      reason: 'At least one DG variant combination requires manual review.',
+      decision: { status: 'REVIEW_REQUIRED', level: null, reason: reviewReason(blockers) },
+      additionalRequirements,
+      variantResolution,
     };
   }
 
-  const [first, ...rest] = decisions;
-  const allAgree = rest.every((decision) => decision.status === first.status && decision.level === first.level);
+  let level: 0 | 1 | 2 | 3 | 4 = 0;
+  for (const evaluation of evaluations) {
+    // Every remaining decision is CLEAR (level 0) or SEGREGATION_REQUIRED
+    // (level 1-4), so `level` is always a number here.
+    const pairLevel = evaluation.decision.level as 0 | 1 | 2 | 3 | 4;
+    if (pairLevel > level) {
+      level = pairLevel;
+    }
+  }
 
-  if (!allAgree) {
+  if (level === 0) {
     return {
-      status: 'REVIEW_REQUIRED',
-      level: null,
-      reason:
-        'Different DG variants for the supplied UN number(s) produce different segregation outcomes; the specific variant is unresolved.',
+      decision: {
+        status: 'CLEAR',
+        level: 0,
+        reason: 'All DG variant combinations produce the same clear segregation outcome.',
+      },
+      additionalRequirements,
+      variantResolution,
     };
   }
 
-  if (rest.length === 0) {
-    return first;
-  }
-
-  if (first.status === 'SEGREGATION_REQUIRED') {
-    return {
-      status: 'SEGREGATION_REQUIRED',
-      level: first.level,
-      reason: `All DG variant combinations require segregation level ${first.level}.`,
-    };
-  }
+  const reason =
+    variantResolution === 'UNIFORM'
+      ? `All DG variant combinations require segregation level ${level}.`
+      : `Segregation level ${level} is the strictest applicable result across the evaluated DG variant ` +
+        'combinations; the specific variant is unresolved, so other variants may require less.';
 
   return {
-    status: 'CLEAR',
-    level: 0,
-    reason: 'All DG variant combinations produce the same clear segregation outcome.',
+    decision: { status: 'SEGREGATION_REQUIRED', level, reason },
+    additionalRequirements,
+    variantResolution,
   };
 }

@@ -8,7 +8,7 @@
     "types": "wrangler types",
     "typecheck": "pnpm run types && tsc --noEmit",
     "test": "pnpm run types && vitest run",
-    "test:converter": "node --test test/converter/authorized-dataset-convert.test.mjs",
+    "test:converter": "node --test test/converter/authorized-dataset-convert.test.mjs test/converter/sg-sheet-convert.test.mjs",
     "migrate:local": "wrangler d1 migrations apply DB --local",
     "check": "pnpm run typecheck && pnpm run migrate:local && pnpm run test && pnpm run test:converter",
     "dataset:convert": "node scripts/authorized-dataset-convert.mjs",

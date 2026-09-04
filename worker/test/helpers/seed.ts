@@ -33,11 +33,38 @@ export async function seedDgEntry(db: D1Database, input: SeedDgEntryInput): Prom
     .run();
 }
 
-export async function seedClassRule(db: D1Database, classA: string, classB: string, level: number): Promise<void> {
+export async function seedClassRule(
+  db: D1Database,
+  classA: string,
+  classB: string,
+  level: number,
+  sourceToken?: string,
+): Promise<void> {
   const [a, b] = classA <= classB ? [classA, classB] : [classB, classA];
   await db
-    .prepare('INSERT INTO segregation_class_rules (class_a, class_b, level) VALUES (?, ?, ?)')
-    .bind(a, b, level)
+    .prepare('INSERT INTO segregation_class_rules (class_a, class_b, level, source_token) VALUES (?, ?, ?, ?)')
+    .bind(a, b, level, sourceToken ?? (level === 0 ? 'X' : String(level)))
+    .run();
+}
+
+export interface SeedSgRuleInput {
+  code: string;
+  ruleType: string;
+  targets?: string[];
+  level?: number | null;
+  sourceText?: string;
+}
+
+export async function seedSgRule(db: D1Database, input: SeedSgRuleInput): Promise<void> {
+  await db
+    .prepare('INSERT INTO sg_rules (code, rule_type, targets_json, level, source_text) VALUES (?, ?, ?, ?, ?)')
+    .bind(
+      input.code,
+      input.ruleType,
+      JSON.stringify(input.targets ?? []),
+      input.level ?? null,
+      input.sourceText ?? `synthetic test rule ${input.code}`,
+    )
     .run();
 }
 
@@ -50,6 +77,10 @@ export async function seedClassRule(db: D1Database, classA: string, classB: stri
  * of what other tests in the file have or haven't seeded yet. The reserved
  * UN number and class name are outside the ranges other test helpers in
  * this file allocate, so they never collide.
+ *
+ * Schema version 1 is used deliberately: it is the transitional version that
+ * does not require sg_rules content, so these tests exercise readiness
+ * without asserting anything about the authorized SG table.
  */
 export async function markSyntheticDatasetReady(db: D1Database): Promise<void> {
   await db.batch([
@@ -71,8 +102,8 @@ export async function markSyntheticDatasetReady(db: D1Database): Promise<void> {
       ),
     db
       .prepare(
-        `INSERT OR IGNORE INTO segregation_class_rules (class_a, class_b, level)
-         VALUES ('TEST_READY_MARKER', 'TEST_READY_MARKER', 0)`,
+        `INSERT OR IGNORE INTO segregation_class_rules (class_a, class_b, level, source_token)
+         VALUES ('TEST_READY_MARKER', 'TEST_READY_MARKER', 0, 'X')`,
       ),
   ]);
 }

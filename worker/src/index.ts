@@ -1,9 +1,11 @@
 import { getDatasetStatus } from './data/dataset-status';
 import { findDgEntriesByUnNumber } from './data/dg-entries';
 import { loadSegregationRuleSet } from './data/segregation-rules';
-import { aggregateSegregationDecisions } from './domain/aggregate-decision';
-import { evaluateSegregation } from './domain/segregation';
-import type { SegregationDecision } from './domain/segregation';
+import { loadSgRuleSet } from './data/sg-rules';
+import { aggregatePairEvaluations } from './domain/aggregate-decision';
+import type { AggregatedEvaluation } from './domain/aggregate-decision';
+import { evaluateSegregationPair } from './domain/segregation';
+import type { PairEvaluation } from './domain/segregation';
 import type { DgEntry } from './domain/types';
 import { normalizeUnNumber } from './domain/un-number';
 
@@ -87,32 +89,37 @@ async function handleSegregationCheck(request: Request, env: Env): Promise<Respo
     }
   }
 
-  let decision: SegregationDecision;
+  let aggregated: AggregatedEvaluation;
   try {
-    const ruleSet = await loadSegregationRuleSet(
-      env.DB,
-      pairs.map(([left, right]) => [left.primaryClass, right.primaryClass] as const),
-    );
+    const [classRules, sgRules] = await Promise.all([loadSegregationRuleSet(env.DB), loadSgRuleSet(env.DB)]);
 
-    const decisions = pairs.map(([left, right]) => evaluateSegregation(left, right, ruleSet)) as [
-      SegregationDecision,
-      ...SegregationDecision[],
-    ];
-    decision = aggregateSegregationDecisions(decisions);
+    const evaluations = pairs.map(([left, right]) =>
+      evaluateSegregationPair(left, right, classRules, sgRules),
+    ) as [PairEvaluation, ...PairEvaluation[]];
+    aggregated = aggregatePairEvaluations(evaluations);
   } catch (error) {
     console.error('Failed to evaluate segregation', error);
     return errorResponse(500, 'INTERNAL_ERROR', 'Unable to complete segregation check.');
   }
 
+  // Response fields are additive over the PR 8 contract: `ok`, `input`,
+  // `decision` and `variants` keep their existing shape and meaning, and
+  // `additionalRequirements` / `variantResolution` are new. An older client
+  // that ignores the new fields still parses this correctly — but note that
+  // ignoring `additionalRequirements` means a non-empty obligation list on a
+  // level-0 decision is not shown, which is why this engine must not be
+  // activated in production before the client can surface it.
   return Response.json({
     ok: true,
     input: { leftUnNumber, rightUnNumber },
-    decision,
+    decision: aggregated.decision,
     variants: {
       left: leftEntries.length,
       right: rightEntries.length,
       evaluatedPairs: pairs.length,
     },
+    additionalRequirements: aggregated.additionalRequirements,
+    variantResolution: aggregated.variantResolution,
   });
 }
 

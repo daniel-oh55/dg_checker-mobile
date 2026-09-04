@@ -1,6 +1,6 @@
 // Offline import harness for the private, authorized DG dataset. Validates
 // a canonical JSON snapshot and generates deterministic SQL compatible with
-// migrations 0001-0003. Node built-ins only — no dependencies. `fs` is
+// migrations 0001-0004. Node built-ins only — no dependencies. `fs` is
 // imported dynamically inside main() so this module stays importable (for
 // its pure validate/build-sql exports) from environments without real
 // filesystem access, such as the Vitest/Workers test pool.
@@ -9,7 +9,10 @@
 //   node worker/scripts/dataset-import.mjs validate <input.json>
 //   node worker/scripts/dataset-import.mjs build-sql <input.json> <output.sql>
 
-export const SCHEMA_VERSION = 1;
+// Schema 2 adds `sgRules` to the dataset root and `sourceToken` to every
+// class rule. Validation stays strict in both directions: unknown fields are
+// still rejected, and every new field has a mandatory, checked shape.
+export const SCHEMA_VERSION = 2;
 
 export class DatasetValidationError extends Error {
   constructor(errors) {
@@ -20,7 +23,10 @@ export class DatasetValidationError extends Error {
 }
 
 const UN_NUMBER_PATTERN = /^[0-9]{4}$/;
-const ROOT_KEYS = new Set(['schemaVersion', 'datasetVersion', 'dgEntries', 'classRules']);
+const SG_CODE_PATTERN = /^SG[0-9]+$/;
+const SGG_TOKEN_PATTERN = /^SGG[0-9]+$/;
+
+const ROOT_KEYS = new Set(['schemaVersion', 'datasetVersion', 'dgEntries', 'classRules', 'sgRules']);
 const DG_ENTRY_KEYS = new Set([
   'unNumber',
   'variantKey',
@@ -30,7 +36,28 @@ const DG_ENTRY_KEYS = new Set([
   'segregationCodes',
   'compatibilityGroup',
 ]);
-const CLASS_RULE_KEYS = new Set(['classA', 'classB', 'level']);
+const CLASS_RULE_KEYS = new Set(['classA', 'classB', 'level', 'sourceToken']);
+const SG_RULE_KEYS = new Set(['code', 'ruleType', 'targets', 'level', 'sourceText']);
+
+/**
+ * The authorized SEG.TABLE cell tokens a class rule may originate from.
+ * "X" means the cell contributes no numeric base level, which is recorded as
+ * level 0 — never as an absent rule, and never as "stop evaluating".
+ */
+export const SOURCE_TOKEN_LEVELS = new Map([
+  ['X', 0],
+  ['1', 1],
+  ['2', 2],
+  ['3', 3],
+  ['4', 4],
+]);
+
+/** Rule types that carry a numeric level and at least one target. */
+const DIRECT_RULE_TYPES = new Set(['DIRECT_CLASS', 'DIRECT_SGG', 'DIRECT_UN']);
+/** Rule types that carry neither a level nor any target. */
+const NON_EVALUABLE_RULE_TYPES = new Set(['ADDITIONAL_REQUIREMENT', 'REVIEW_ONLY', 'RESERVED']);
+
+export const SG_RULE_TYPES = new Set([...DIRECT_RULE_TYPES, 'AS_FOR_CLASS', ...NON_EVALUABLE_RULE_TYPES]);
 
 function isPlainObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -109,7 +136,7 @@ function validateClassRule(rule, index, errors, seen) {
     errors.push(`${path} has unknown field(s): ${extra.join(', ')}.`);
   }
 
-  const { classA, classB, level } = rule;
+  const { classA, classB, level, sourceToken } = rule;
   const classAValid = typeof classA === 'string' && classA.length > 0;
   const classBValid = typeof classB === 'string' && classB.length > 0;
 
@@ -117,6 +144,22 @@ function validateClassRule(rule, index, errors, seen) {
   if (!classBValid) errors.push(`${path}.classB must be a non-empty string.`);
   if (!(Number.isInteger(level) && level >= 0 && level <= 4)) {
     errors.push(`${path}.level must be an integer between 0 and 4 (got ${JSON.stringify(level)}).`);
+  }
+
+  // sourceToken records which authorized cell token produced the row, and
+  // must agree with the level it was converted to. That agreement is what
+  // makes "X -> level 0" auditable rather than indistinguishable from a
+  // numeric 0 the source never contained.
+  if (!SOURCE_TOKEN_LEVELS.has(sourceToken)) {
+    errors.push(
+      `${path}.sourceToken must be one of ${[...SOURCE_TOKEN_LEVELS.keys()].map((t) => `"${t}"`).join(', ')} ` +
+        `(got ${JSON.stringify(sourceToken)}).`,
+    );
+  } else if (SOURCE_TOKEN_LEVELS.get(sourceToken) !== level) {
+    errors.push(
+      `${path}.sourceToken "${sourceToken}" implies level ${SOURCE_TOKEN_LEVELS.get(sourceToken)} ` +
+        `but level is ${JSON.stringify(level)}.`,
+    );
   }
 
   if (classAValid && classBValid) {
@@ -128,6 +171,84 @@ function validateClassRule(rule, index, errors, seen) {
       errors.push(`${path} duplicates class pair (${classA}, ${classB}).`);
     }
     seen.add(key);
+  }
+}
+
+function validateSgRule(rule, index, errors, seen) {
+  const path = `sgRules[${index}]`;
+  if (!isPlainObject(rule)) {
+    errors.push(`${path} must be an object.`);
+    return;
+  }
+
+  const extra = unknownKeys(rule, SG_RULE_KEYS);
+  if (extra.length > 0) {
+    errors.push(`${path} has unknown field(s): ${extra.join(', ')}.`);
+  }
+
+  const { code, ruleType, targets, level, sourceText } = rule;
+
+  if (typeof code !== 'string' || !SG_CODE_PATTERN.test(code)) {
+    errors.push(`${path}.code must match /^SG[0-9]+$/ (got ${JSON.stringify(code)}).`);
+  } else {
+    if (seen.has(code)) {
+      errors.push(`${path} duplicates SG code ${code}.`);
+    }
+    seen.add(code);
+  }
+
+  if (typeof sourceText !== 'string' || sourceText.length === 0) {
+    errors.push(`${path}.sourceText must be a non-empty string.`);
+  }
+
+  if (!SG_RULE_TYPES.has(ruleType)) {
+    errors.push(`${path}.ruleType must be one of ${[...SG_RULE_TYPES].join(', ')} (got ${JSON.stringify(ruleType)}).`);
+    return;
+  }
+
+  if (!isStringArray(targets)) {
+    errors.push(`${path}.targets must be a string array.`);
+    return;
+  }
+
+  const levelValid = level === null || (Number.isInteger(level) && level >= 1 && level <= 4);
+  if (!levelValid) {
+    errors.push(`${path}.level must be null or an integer between 1 and 4 (got ${JSON.stringify(level)}).`);
+  }
+
+  // Target/level shape is constrained per rule type, so a rule can never be
+  // stored in a form the runtime would have to guess about — e.g. a
+  // DIRECT_SGG rule with no level, or a RESERVED rule that carries targets
+  // and could be mistaken for an evaluable one.
+  if (DIRECT_RULE_TYPES.has(ruleType)) {
+    if (targets.length === 0) {
+      errors.push(`${path}.targets must be non-empty for ruleType ${ruleType}.`);
+    }
+    if (level === null) {
+      errors.push(`${path}.level must be 1-4 for ruleType ${ruleType}.`);
+    }
+    if (ruleType === 'DIRECT_SGG' && !targets.every((target) => SGG_TOKEN_PATTERN.test(target))) {
+      errors.push(`${path}.targets must all match /^SGG[0-9]+$/ for ruleType DIRECT_SGG.`);
+    }
+    if (ruleType === 'DIRECT_UN' && !targets.every((target) => UN_NUMBER_PATTERN.test(target))) {
+      errors.push(`${path}.targets must all be canonical 4-digit UN numbers for ruleType DIRECT_UN.`);
+    }
+  } else if (ruleType === 'AS_FOR_CLASS') {
+    if (targets.length === 0) {
+      errors.push(`${path}.targets must be non-empty for ruleType AS_FOR_CLASS.`);
+    }
+    if (level !== null) {
+      // The level comes from the substituted class matrix lookup at runtime,
+      // never from the rule row itself.
+      errors.push(`${path}.level must be null for ruleType AS_FOR_CLASS.`);
+    }
+  } else {
+    if (targets.length !== 0) {
+      errors.push(`${path}.targets must be empty for ruleType ${ruleType}.`);
+    }
+    if (level !== null) {
+      errors.push(`${path}.level must be null for ruleType ${ruleType}.`);
+    }
   }
 }
 
@@ -171,6 +292,13 @@ export function validateDataset(raw) {
     raw.classRules.forEach((rule, index) => validateClassRule(rule, index, errors, seenRules));
   }
 
+  if (!Array.isArray(raw.sgRules)) {
+    errors.push('sgRules must be an array.');
+  } else {
+    const seenSgCodes = new Set();
+    raw.sgRules.forEach((rule, index) => validateSgRule(rule, index, errors, seenSgCodes));
+  }
+
   if (errors.length > 0) {
     throw new DatasetValidationError(errors);
   }
@@ -180,6 +308,7 @@ export function validateDataset(raw) {
     datasetVersion: raw.datasetVersion,
     dgEntries: raw.dgEntries,
     classRules: raw.classRules,
+    sgRules: raw.sgRules,
   };
 }
 
@@ -196,13 +325,24 @@ export function summarizeDataset(dataset) {
   const multiVariantUnNumberCount = [...variantCounts.values()].filter((count) => count > 1).length;
   const primaryClasses = new Set(dataset.dgEntries.map((e) => e.primaryClass));
 
+  const sgRuleCountsByType = {};
+  for (const ruleType of SG_RULE_TYPES) {
+    sgRuleCountsByType[ruleType] = 0;
+  }
+  for (const rule of dataset.sgRules) {
+    sgRuleCountsByType[rule.ruleType] += 1;
+  }
+
   return {
     datasetVersion: dataset.datasetVersion,
     dgEntryCount: dataset.dgEntries.length,
     uniqueUnNumberCount: unNumbers.size,
     classRuleCount: dataset.classRules.length,
+    classRuleXCount: dataset.classRules.filter((rule) => rule.sourceToken === 'X').length,
     primaryClassCount: primaryClasses.size,
     multiVariantUnNumberCount,
+    sgRuleCount: dataset.sgRules.length,
+    sgRuleCountsByType,
   };
 }
 
@@ -232,20 +372,21 @@ function chunk(items, size) {
 export const INSERT_BATCH_SIZE = 100;
 
 /**
- * Generates deterministic SQL that replaces the full dg_entries and
- * segregation_class_rules snapshot with the validated dataset, and upserts
- * only the two dataset-related app_metadata keys. Never touches migration
- * bookkeeping, unrelated tables, or app_metadata wholesale. Emits no explicit
- * transaction statements (D1's import path does not support nested
- * transactions) and chunks INSERTs into batches of INSERT_BATCH_SIZE rows to
- * stay within D1's per-statement size limit.
+ * Generates deterministic SQL that replaces the full dg_entries,
+ * segregation_class_rules and sg_rules snapshot with the validated dataset,
+ * and upserts only the two dataset-related app_metadata keys. Never touches
+ * migration bookkeeping, unrelated tables, or app_metadata wholesale. Emits
+ * no explicit transaction statements (D1's import path does not support
+ * nested transactions) and chunks INSERTs into batches of INSERT_BATCH_SIZE
+ * rows to stay within D1's per-statement size limit.
  *
  * The two readiness metadata keys are deleted first, before the table
  * replacement even begins, so a snapshot that runs partway (some rows
  * inserted, statement stream cut off before the closing upserts) never
  * leaves getDatasetStatus() reading old metadata against a half-replaced
  * dataset. Readiness is only restored by the final upserts once every row
- * has been inserted.
+ * has been inserted, and dataset_version — the key getDatasetStatus()
+ * requires alongside the schema version — is written last of all.
  */
 export function buildSql(dataset) {
   const entries = [...dataset.dgEntries].sort(
@@ -254,10 +395,12 @@ export function buildSql(dataset) {
   const rules = [...dataset.classRules].sort(
     (a, b) => compareStrings(a.classA, b.classA) || compareStrings(a.classB, b.classB),
   );
+  const sgRules = [...dataset.sgRules].sort((a, b) => compareStrings(a.code, b.code));
 
   const lines = [];
   lines.push('-- Generated by worker/scripts/dataset-import.mjs. Do not edit by hand.');
   lines.push(`DELETE FROM app_metadata WHERE key IN ('dataset_schema_version', 'dataset_version');`);
+  lines.push('DELETE FROM sg_rules;');
   lines.push('DELETE FROM segregation_class_rules;');
   lines.push('DELETE FROM dg_entries;');
 
@@ -278,8 +421,21 @@ export function buildSql(dataset) {
   }
 
   for (const batch of chunk(rules, INSERT_BATCH_SIZE)) {
-    const values = batch.map((r) => `(${sqlString(r.classA)}, ${sqlString(r.classB)}, ${r.level})`).join(',\n  ');
-    lines.push(`INSERT INTO segregation_class_rules (class_a, class_b, level) VALUES\n  ${values};`);
+    const values = batch
+      .map((r) => `(${sqlString(r.classA)}, ${sqlString(r.classB)}, ${r.level}, ${sqlString(r.sourceToken)})`)
+      .join(',\n  ');
+    lines.push(`INSERT INTO segregation_class_rules (class_a, class_b, level, source_token) VALUES\n  ${values};`);
+  }
+
+  for (const batch of chunk(sgRules, INSERT_BATCH_SIZE)) {
+    const values = batch
+      .map(
+        (r) =>
+          `(${sqlString(r.code)}, ${sqlString(r.ruleType)}, ${sqlString(JSON.stringify(r.targets))}, ` +
+          `${r.level === null ? 'NULL' : r.level}, ${sqlString(r.sourceText)})`,
+      )
+      .join(',\n  ');
+    lines.push(`INSERT INTO sg_rules (code, rule_type, targets_json, level, source_text) VALUES\n  ${values};`);
   }
 
   lines.push(
@@ -337,9 +493,13 @@ async function main() {
   console.log(`Dataset version: ${summary.datasetVersion}`);
   console.log(`DG entries: ${summary.dgEntryCount}`);
   console.log(`Unique UN numbers: ${summary.uniqueUnNumberCount}`);
-  console.log(`Class rules: ${summary.classRuleCount}`);
+  console.log(`Class rules: ${summary.classRuleCount} (source token X -> level 0: ${summary.classRuleXCount})`);
   console.log(`Primary classes: ${summary.primaryClassCount}`);
   console.log(`UN numbers with multiple variants: ${summary.multiVariantUnNumberCount}`);
+  console.log(`SG rules: ${summary.sgRuleCount}`);
+  for (const [ruleType, count] of Object.entries(summary.sgRuleCountsByType)) {
+    console.log(`  ${ruleType}: ${count}`);
+  }
 
   if (command === 'validate') {
     return;
