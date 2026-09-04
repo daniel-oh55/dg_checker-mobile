@@ -224,13 +224,25 @@ can be staged without an unavailable window:
   table is never accepted as a valid v2 dataset, so a half-finished import
   reports not-ready instead of serving an engine with no special provisions.
 
-Safe activation order, once the client is ready:
+Safe activation order:
 
 1. apply migration `0004` to the remote D1 database — additive only; the
    deployed v1 dataset keeps serving throughout
 2. deploy the Worker — still reading the v1 dataset, fail-closed on SG codes
-3. import the schema v2 dataset — readiness flips to v2 only after the final
-   `dataset_version` write, once every row is in place
-4. release the mobile client that renders `additionalRequirements`
+3. release the mobile client that renders `additionalRequirements` and stays
+   backward-compatible with the pre-v2/v1 response while rollout is in
+   progress
+4. only after that compatible mobile client is available, import the schema
+   v2 dataset — readiness flips to v2 only after the final `dataset_version`
+   write, once every row is in place
 
-Steps 1–3 are each independently safe to stop at.
+Steps 1 and 2 may safely be completed beforehand, independently of the
+client. **Schema v2 dataset activation/import (step 4) must never precede the
+compatible mobile release (step 3):** a v2 dataset can return `decision.level
+= 0` together with a non-empty `additionalRequirements` list, and a client
+that ignores that field would show such a pair as unrestricted while an
+obligation is outstanding. Step 4 is the actual feature/data activation
+point — everything before it is infrastructure that stays inert under v1.
+
+No production operation (migration, deployment, or dataset import) is
+performed as part of this PR.
