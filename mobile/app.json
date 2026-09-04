@@ -13,8 +13,12 @@
     "android": {
       "package": "com.hymlounge.segregationchecker",
       "versionCode": 1,
-      "permissions": ["android.permission.INTERNET"],
-      "blockedPermissions": ["com.google.android.gms.permission.AD_ID"],
+      "permissions": [
+        "android.permission.INTERNET"
+      ],
+      "blockedPermissions": [
+        "com.google.android.gms.permission.AD_ID"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -27,7 +31,11 @@
       "favicon": "./assets/favicon.png"
     },
     "extra": {
-      "apiBaseUrl": "https://dg-segregation-api.baseballmeng.workers.dev"
-    }
+      "apiBaseUrl": "https://dg-segregation-api.baseballmeng.workers.dev",
+      "eas": {
+        "projectId": "c2510915-c1d8-4742-89f1-435d4663ef09"
+      }
+    },
+    "owner": "ollele"
   }
 }
