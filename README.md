@@ -78,12 +78,13 @@ Production health check: `https://dg-segregation-api.<account>.workers.dev/healt
 
 See [docs/segregation-engine.md](docs/segregation-engine.md) for what the
 engine evaluates, the `REVIEW_REQUIRED` boundaries it deliberately keeps, the
-dataset schema v2 contract, and the production activation order.
+dataset schema v3 contract, and the production activation order.
 
-The schema v2 engine is **not deployed to production**: the current mobile
+The schema v3 engine is **not deployed to production**: the current mobile
 client cannot surface `additionalRequirements`, and a client that ignores that
 field would present a level-0 result as unrestricted while an obligation is
-still outstanding.
+still outstanding. Production still runs the older dataset, and may activate
+schema v3 directly without activating schema v2 first.
 
 ## Check
 
@@ -100,8 +101,8 @@ The production/authorized IMDG dataset is never committed to this repository.
 authorized dataset snapshot there for local use only.
 
 ```bash
-# convert authorized workbooks into a canonical schema v2 snapshot
-pnpm --filter worker dataset:convert --   --dgl private-data/DATA_TABLE_DGL.xlsx   --segregation private-data/Segregation.xlsx   --dataset-version authorized-source-v2   --output private-data/dataset.json
+# convert authorized workbooks into a canonical schema v3 snapshot
+pnpm --filter worker dataset:convert --   --dgl private-data/DATA_TABLE_DGL.xlsx   --segregation private-data/Segregation.xlsx   --dataset-version authorized-source-v3   --output private-data/dataset.json
 
 # validate a private dataset snapshot
 pnpm --filter worker dataset:validate -- private-data/dataset.json

@@ -8,6 +8,12 @@ export interface SeedDgEntryInput {
   unNumber: string;
   variantKey: string;
   primaryClass: string;
+  /**
+   * Omitted means NULL — the shape of a schema v1/v2 row that predates
+   * migration 0005, which the Worker must keep serving during a staged
+   * rollout. Tests that need a schema-v3-style row pass one explicitly.
+   */
+  properShippingName?: string | null;
   subsidiaryRisksJson?: string;
   segregationGroupsJson?: string;
   segregationCodesJson?: string;
@@ -18,12 +24,13 @@ export async function seedDgEntry(db: D1Database, input: SeedDgEntryInput): Prom
   await db
     .prepare(
       `INSERT INTO dg_entries
-         (un_number, variant_key, primary_class, subsidiary_risks_json, segregation_groups_json, segregation_codes_json, compatibility_group)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+         (un_number, variant_key, proper_shipping_name, primary_class, subsidiary_risks_json, segregation_groups_json, segregation_codes_json, compatibility_group)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
       input.unNumber,
       input.variantKey,
+      input.properShippingName ?? null,
       input.primaryClass,
       input.subsidiaryRisksJson ?? '[]',
       input.segregationGroupsJson ?? '[]',
@@ -80,7 +87,10 @@ export async function seedSgRule(db: D1Database, input: SeedSgRuleInput): Promis
  *
  * Schema version 1 is used deliberately: it is the transitional version that
  * does not require sg_rules content, so these tests exercise readiness
- * without asserting anything about the authorized SG table.
+ * without asserting anything about the authorized SG table. The marker row
+ * also leaves proper_shipping_name NULL, which is exactly what a real
+ * pre-v3 dataset looks like after migration 0005 — so every test built on
+ * this helper doubles as staged-rollout compatibility coverage.
  */
 export async function markSyntheticDatasetReady(db: D1Database): Promise<void> {
   await db.batch([
@@ -97,8 +107,8 @@ export async function markSyntheticDatasetReady(db: D1Database): Promise<void> {
     db
       .prepare(
         `INSERT OR IGNORE INTO dg_entries
-           (un_number, variant_key, primary_class, subsidiary_risks_json, segregation_groups_json, segregation_codes_json, compatibility_group)
-         VALUES ('0000', 'READY_MARKER', 'TEST_READY_MARKER', '[]', '[]', '[]', NULL)`,
+           (un_number, variant_key, proper_shipping_name, primary_class, subsidiary_risks_json, segregation_groups_json, segregation_codes_json, compatibility_group)
+         VALUES ('0000', 'READY_MARKER', NULL, 'TEST_READY_MARKER', '[]', '[]', '[]', NULL)`,
       ),
     db
       .prepare(

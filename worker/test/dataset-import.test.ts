@@ -18,6 +18,7 @@ function buildSyntheticDgEntries(count: number) {
     return {
       unNumber,
       variantKey: 'A',
+      properShippingName: `SYNTHETIC ENTRY ${unNumber}`,
       primaryClass: 'TEST_A',
       subsidiaryRisks: [],
       segregationGroups: [],
@@ -43,7 +44,7 @@ function buildSyntheticClassRules(count: number) {
 describe('validateDataset — valid data', () => {
   it('accepts the synthetic fixture and returns it unchanged', () => {
     const dataset = validateDataset(cloneFixture());
-    expect(dataset.schemaVersion).toBe(2);
+    expect(dataset.schemaVersion).toBe(3);
     expect(dataset.datasetVersion).toBe('synthetic-test-v1');
     expect(dataset.dgEntries).toHaveLength(4);
     expect(dataset.classRules).toHaveLength(2);
@@ -57,6 +58,8 @@ describe('validateDataset — valid data', () => {
       datasetVersion: 'synthetic-test-v1',
       dgEntryCount: 4,
       uniqueUnNumberCount: 3,
+      properShippingNameCount: 4,
+      distinctProperShippingNameCount: 4,
       classRuleCount: 2,
       classRuleXCount: 1,
       primaryClassCount: 2,
@@ -82,10 +85,10 @@ describe('validateDataset — invalid data', () => {
     expect(() => validateDataset([])).toThrow(DatasetValidationError);
   });
 
-  it('rejects schema version 1 now that the canonical contract is version 2', () => {
+  it('rejects schema version 2 now that the canonical contract is version 3', () => {
     const bad = cloneFixture() as Record<string, unknown>;
-    bad.schemaVersion = 1;
-    expect(() => validateDataset(bad)).toThrow(/schemaVersion must be 2/);
+    bad.schemaVersion = 2;
+    expect(() => validateDataset(bad)).toThrow(/schemaVersion must be 3/);
   });
 
   it('rejects a dataset with no sgRules array at all', () => {
@@ -129,6 +132,36 @@ describe('validateDataset — invalid data', () => {
     const bad = cloneFixture();
     bad.classRules[0] = { classA: 'TEST_B', classB: 'TEST_A', level: 2, sourceToken: '2' };
     expect(() => validateDataset(bad)).toThrow(/canonical ordering/);
+  });
+
+  it('rejects a missing properShippingName', () => {
+    const bad = cloneFixture();
+    delete (bad.dgEntries[0] as Record<string, unknown>).properShippingName;
+    expect(() => validateDataset(bad)).toThrow(/properShippingName must be a non-empty string/);
+  });
+
+  it('rejects a blank properShippingName rather than importing a nameless entry', () => {
+    const bad = cloneFixture();
+    (bad.dgEntries[0] as Record<string, unknown>).properShippingName = '   ';
+    expect(() => validateDataset(bad)).toThrow(/properShippingName must be a non-empty string/);
+  });
+
+  it('rejects a non-string properShippingName', () => {
+    const bad = cloneFixture();
+    (bad.dgEntries[0] as Record<string, unknown>).properShippingName = 42;
+    expect(() => validateDataset(bad)).toThrow(/properShippingName must be a non-empty string/);
+  });
+
+  it('rejects a null properShippingName — the canonical snapshot is never nullable', () => {
+    const bad = cloneFixture();
+    (bad.dgEntries[0] as Record<string, unknown>).properShippingName = null;
+    expect(() => validateDataset(bad)).toThrow(/properShippingName must be a non-empty string/);
+  });
+
+  it('rejects unknown DG entry fields', () => {
+    const bad = cloneFixture();
+    (bad.dgEntries[0] as Record<string, unknown>).packingGroup = 'II';
+    expect(() => validateDataset(bad)).toThrow(/unknown field\(s\): packingGroup/);
   });
 
   it('rejects unknown root fields', () => {
@@ -278,13 +311,16 @@ describe('buildSql', () => {
     expect(sql).toContain('DELETE FROM sg_rules;');
     expect(sql).toContain('DELETE FROM segregation_class_rules;');
     expect(sql).toContain('DELETE FROM dg_entries;');
-    expect(sql).toContain("('9001', 'A', 'TEST_A'");
-    expect(sql).toContain("('9003', 'A', 'TEST_B'");
+    expect(sql).toContain("('9001', 'A', 'SYNTHETIC TEST SUBSTANCE ALPHA', 'TEST_A'");
+    expect(sql).toContain("('9003', 'A', 'SYNTHETIC TEST SUBSTANCE GAMMA, N.O.S.', 'TEST_B'");
+    expect(sql).toContain(
+      'INSERT INTO dg_entries (un_number, variant_key, proper_shipping_name, primary_class, ',
+    );
     expect(sql).toContain("('TEST_A', 'TEST_A', 0, 'X')");
     expect(sql).toContain("('TEST_A', 'TEST_B', 2, '2')");
     expect(sql).toContain("('SG9001', 'DIRECT_CLASS', '[\"TEST_B\"]', 3,");
     expect(sql).toContain("('SG9006', 'RESERVED', '[]', NULL,");
-    expect(sql).toContain("INSERT INTO app_metadata (key, value) VALUES ('dataset_schema_version', '2')");
+    expect(sql).toContain("INSERT INTO app_metadata (key, value) VALUES ('dataset_schema_version', '3')");
     expect(sql).toContain(
       "INSERT INTO app_metadata (key, value) VALUES ('dataset_version', 'synthetic-test-v1')",
     );
@@ -345,12 +381,13 @@ describe('buildSql', () => {
 
   it('escapes apostrophes in string values, including SG source text', () => {
     const dataset = validateDataset({
-      schemaVersion: 2,
+      schemaVersion: 3,
       datasetVersion: "synthetic-o'brien-v1",
       dgEntries: [
         {
           unNumber: '9004',
           variantKey: "A'B",
+          properShippingName: "SYNTHETIC O'BRIEN SUBSTANCE",
           primaryClass: 'TEST_A',
           subsidiaryRisks: [],
           segregationGroups: [],
@@ -371,7 +408,7 @@ describe('buildSql', () => {
     });
 
     const sql = buildSql(dataset);
-    expect(sql).toContain("'9004', 'A''B', 'TEST_A'");
+    expect(sql).toContain("'9004', 'A''B', 'SYNTHETIC O''BRIEN SUBSTANCE', 'TEST_A'");
     expect(sql).toContain("'GROUP''X'");
     expect(sql).toContain("'dataset_version', 'synthetic-o''brien-v1'");
     expect(sql).toContain("'synthetic o''brien wording'");
@@ -388,7 +425,7 @@ describe('buildSql', () => {
   it('splits a production-sized dg_entries snapshot into multiple batches', () => {
     const entryCount = INSERT_BATCH_SIZE * 2 + 5;
     const dataset = validateDataset({
-      schemaVersion: 2,
+      schemaVersion: 3,
       datasetVersion: 'synthetic-large-v1',
       dgEntries: buildSyntheticDgEntries(entryCount),
       classRules: [],
@@ -409,7 +446,7 @@ describe('buildSql', () => {
   it('splits a production-sized class rule snapshot into multiple batches', () => {
     const ruleCount = INSERT_BATCH_SIZE * 2 + 5;
     const dataset = validateDataset({
-      schemaVersion: 2,
+      schemaVersion: 3,
       datasetVersion: 'synthetic-large-rules-v1',
       dgEntries: [],
       classRules: buildSyntheticClassRules(ruleCount),

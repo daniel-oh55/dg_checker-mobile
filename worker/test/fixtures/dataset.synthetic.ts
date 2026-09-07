@@ -4,12 +4,13 @@
  * meaning. Never real IMDG data.
  */
 export const syntheticDataset = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   datasetVersion: 'synthetic-test-v1',
   dgEntries: [
     {
       unNumber: '9001',
       variantKey: 'A',
+      properShippingName: 'SYNTHETIC TEST SUBSTANCE ALPHA',
       primaryClass: 'TEST_A',
       subsidiaryRisks: [],
       segregationGroups: [],
@@ -19,6 +20,7 @@ export const syntheticDataset = {
     {
       unNumber: '9001',
       variantKey: 'B',
+      properShippingName: 'SYNTHETIC TEST SUBSTANCE ALPHA, STABILIZED',
       primaryClass: 'TEST_A',
       subsidiaryRisks: [],
       segregationGroups: [],
@@ -28,6 +30,7 @@ export const syntheticDataset = {
     {
       unNumber: '9002',
       variantKey: 'A',
+      properShippingName: 'SYNTHETIC TEST SUBSTANCE BETA',
       primaryClass: 'TEST_A',
       subsidiaryRisks: [],
       segregationGroups: [],
@@ -37,6 +40,7 @@ export const syntheticDataset = {
     {
       unNumber: '9003',
       variantKey: 'A',
+      properShippingName: 'SYNTHETIC TEST SUBSTANCE GAMMA, N.O.S.',
       primaryClass: 'TEST_B',
       subsidiaryRisks: [],
       segregationGroups: [],
