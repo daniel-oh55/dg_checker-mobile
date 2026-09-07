@@ -44,13 +44,15 @@ export default function App() {
   const activeInputs = unInputs.slice(0, inputCount);
   const allEmpty = activeInputs.every((value) => value.trim().length === 0);
   const validationMessage = allEmpty ? null : validateActiveInputs(activeInputs);
-  const canSubmit = !validationMessage && !loading;
+  const canSubmit = !allEmpty && !validationMessage && !loading;
 
   function invalidateResult() {
     setResult(null);
     setErrorState(null);
     abortRef.current?.abort();
+    abortRef.current = null;
     requestSeq.current += 1;
+    setLoading(false);
   }
 
   function handleChangeInput(index: number, value: string) {
