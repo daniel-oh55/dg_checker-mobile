@@ -16,6 +16,7 @@ export class MalformedDgEntryError extends Error {
 interface DgEntryRow {
   un_number: string;
   variant_key: string;
+  proper_shipping_name: string | null;
   primary_class: string;
   subsidiary_risks_json: string;
   segregation_groups_json: string;
@@ -42,6 +43,10 @@ function mapRow(row: DgEntryRow): DgEntry {
   return {
     unNumber: row.un_number,
     variantKey: row.variant_key,
+    // NULL is preserved as null, never widened into an empty or placeholder
+    // name: a schema v1/v2 row predates the column and genuinely has no
+    // authorized name to report.
+    properShippingName: row.proper_shipping_name,
     primaryClass: row.primary_class,
     subsidiaryRisks: parseStringArrayColumn(row.subsidiary_risks_json, 'subsidiary_risks_json'),
     segregationGroups: parseStringArrayColumn(row.segregation_groups_json, 'segregation_groups_json'),
@@ -57,7 +62,7 @@ function mapRow(row: DgEntryRow): DgEntry {
 export async function findDgEntriesByUnNumber(db: D1Database, unNumber: string): Promise<DgEntry[]> {
   const result = await db
     .prepare(
-      `SELECT un_number, variant_key, primary_class, subsidiary_risks_json, segregation_groups_json, segregation_codes_json, compatibility_group
+      `SELECT un_number, variant_key, proper_shipping_name, primary_class, subsidiary_risks_json, segregation_groups_json, segregation_codes_json, compatibility_group
        FROM dg_entries
        WHERE un_number = ?`,
     )
@@ -89,7 +94,7 @@ export async function findDgEntriesByUnNumbers(
   const placeholders = unNumbers.map(() => '?').join(', ');
   const result = await db
     .prepare(
-      `SELECT un_number, variant_key, primary_class, subsidiary_risks_json, segregation_groups_json, segregation_codes_json, compatibility_group
+      `SELECT un_number, variant_key, proper_shipping_name, primary_class, subsidiary_risks_json, segregation_groups_json, segregation_codes_json, compatibility_group
        FROM dg_entries
        WHERE un_number IN (${placeholders})`,
     )

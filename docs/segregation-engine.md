@@ -1,24 +1,42 @@
 # Segregation engine
 
 What the engine evaluates, what it deliberately refuses to decide, and how a
-schema v2 dataset is activated. No proprietary source text appears here.
+schema v3 dataset is activated. No proprietary source text appears here.
 
-## Dataset schema v2
+## Dataset schema v3
 
-The canonical private dataset contract is `schemaVersion: 2`:
+The canonical private dataset contract is `schemaVersion: 3`:
 
 ```
 {
-  schemaVersion: 2,
+  schemaVersion: 3,
   datasetVersion,
-  dgEntries,
-  classRules,   // + sourceToken
-  sgRules       // new
+  dgEntries,    // + properShippingName
+  classRules,   // + sourceToken (v2)
+  sgRules       // v2
 }
 ```
 
 Validation in `worker/scripts/dataset-import.mjs` stays strict — unknown
 fields are still rejected, and every new field has a mandatory, checked shape.
+
+**`dgEntries`** gains `properShippingName`, read from the authorized
+`Proper shipping name (PSN)` column of the same DGL source row that produced
+the entry's UN number, class, subsidiary hazards and segregation field, so the
+name can never drift out of alignment with the regulatory columns. The
+converter normalizes it only as far as a stable single-line API value
+requires — the ExcelJS rich-text/hyperlink wrapper is unwrapped and runs of
+whitespace (newlines and NBSP included) collapse to single spaces. Wording is
+otherwise untouched: nothing is translated, re-cased, expanded, re-punctuated
+or dropped, and `N.O.S.` and every other qualifier survives verbatim. A source
+row with no usable name fails the whole conversion rather than importing a
+placeholder.
+
+`properShippingName` is **display/reference data only**. The segregation
+engine never reads it, and no decision may depend on it — see
+[Proper shipping name is informational](#proper-shipping-name-is-informational).
+It is mandatory and non-empty in the canonical snapshot, while the D1 column
+is nullable so pre-v3 rows stay serviceable during rollout.
 
 **`classRules`** gains `sourceToken`, recording which authorized matrix cell
 token produced the row (`"X"`, or `"1"`–`"4"`). The token must agree with the
@@ -45,8 +63,21 @@ cannot be represented safely and mechanically becomes `REVIEW_ONLY`.
 
 Migration `0004_segregation_engine_completion.sql` adds `source_token` to
 `segregation_class_rules` and creates `sg_rules`. The existing `level` CHECK
-already permitted 0, so it is untouched. No SGG, SW, HANDLING or PSN table is
+already permitted 0, so it is untouched. No SGG, SW or HANDLING table is
 created — segregation-group membership already lives on `dg_entries`.
+
+Migration `0005_dg_proper_shipping_name.sql` adds `proper_shipping_name TEXT`
+to `dg_entries`. It is additive: the table is not rebuilt and no index is
+added, because the column is only ever projected, never a query predicate.
+
+The column is deliberately **nullable** even though the schema-v3 snapshot
+guarantees a name for every entry. That is what lets the migration be applied
+while production still serves its older dataset: those rows keep a NULL name
+and stay fully serviceable. SQLite cannot add a `NOT NULL` column without a
+default, and a default would mean inventing a placeholder name. Completeness
+is enforced where it belongs instead — the converter fails on a missing source
+PSN, the import harness rejects a blank one, and schema-v3 readiness fails if
+any persisted row is NULL or blank.
 
 ## Engine coverage
 
@@ -252,6 +283,52 @@ Each pair result carries only the minimum decision contract — `leftUnNumber`,
 `variantResolution` — never `sourceText`, proprietary SG prose, full DGL rows,
 `variantKey`, or internal database IDs.
 
+**`dgSummaries`** is an additive field carrying the compact DG identity of
+each input UN number — what the batch UI needs to label a result. It is built
+from the entries already loaded for the pair evaluation, so it costs no extra
+query, and it is returned in the **same order as `input.unNumbers`**, one
+entry per input, so a client can index into it directly.
+
+```
+dgSummaries: [
+  {
+    unNumber: "1234",
+    variantCount: 2,
+    profiles: [
+      { primaryClass, subsidiaryRisks, properShippingName },
+      ...
+    ]
+  },
+  ...
+]
+```
+
+A UN number can resolve to several dataset variants, and there is no
+authorized basis for picking one of them as *the* answer — so no variant is
+ever chosen as representative. Instead:
+
+- **`variantCount`** is the real number of `DgEntry` rows behind the UN
+  number, so genuine dataset ambiguity is always visible.
+- **`profiles`** holds the *distinct* visible profiles. Variants that differ
+  only in fields the API does not expose collapse into one profile, because a
+  client could not tell them apart anyway. So `variantCount: 3` with
+  `profiles.length: 2` is normal and meaningful: three source variants, two
+  materially different descriptions.
+- **Ordering** is deterministic, derived from the public fields only
+  (`primaryClass`, then `subsidiaryRisks` joined, then `properShippingName`),
+  never from SQLite row order. No severity ordering is implied.
+- **`properShippingName` may be `null`** while the service still runs against
+  a pre-v3 dataset. The API never substitutes `"Unknown"`, `"N/A"` or any
+  other placeholder — how to present a missing name is the client's decision.
+
+A profile carries those three fields and nothing else. `variantKey`,
+`segregationCodes`, `segregationGroups`, `compatibilityGroup`, SG
+`sourceText`, workbook row numbers and database IDs all stay internal.
+
+`POST /segregation/check` is deliberately left unchanged: the 2–10 input UI
+uses the batch endpoint even when N = 2, so there is no reason to widen the
+single-pair contract.
+
 **Summary** is counts only, never a single collapsed batch-wide level:
 
 ```
@@ -274,6 +351,22 @@ only, and stays `null` — never fabricated as `0` — when no pair is
 This PR ships the batch contract and mobile API client/types only; the mobile
 UI for entering 2–10 UN numbers is a later PR.
 
+## Proper shipping name is informational
+
+The proper shipping name is reference data for display. It is **never** an
+input to a regulatory decision, and specifically takes no part in:
+
+- class-matrix evaluation or subsidiary-risk evaluation
+- SG or SGG matching, or `DIRECT_UN` matching (which matches the canonical UN
+  number, never name text)
+- Class 1 handling, strongest-rule aggregation, or `REVIEW_REQUIRED` logic
+
+Adding it changed no segregation result. Two otherwise-identical fixtures with
+different shipping-name text produce the same decision, and so do a pair with
+names and the same pair without them — both are asserted in
+`worker/test/segregation-check-batch-dg-summaries.test.ts`. Regulatory logic is
+never coupled to name text.
+
 ## Production activation
 
 **Not deployed.** This engine must not be activated in production until the
@@ -281,8 +374,9 @@ mobile client can surface `additionalRequirements`, because a client that
 ignores that field would show a level-0 result as unrestricted while an
 obligation is outstanding.
 
-Readiness recognizes two schema versions so migration, import and deployment
-can be staged without an unavailable window:
+Readiness recognizes three schema versions so migration, import and deployment
+can be staged without an unavailable window. Older versions stay serviceable
+indefinitely:
 
 - **v1** has no `sg_rules` content. It stays serviceable under the new Worker
   and stays fail-closed: with no SG rules loaded, any entry carrying an SG code
@@ -291,26 +385,40 @@ can be staged without an unavailable window:
 - **v2** additionally requires `sg_rules` to be populated. An empty `sg_rules`
   table is never accepted as a valid v2 dataset, so a half-finished import
   reports not-ready instead of serving an engine with no special provisions.
+- **v3** is v2 plus a proper shipping name on every DG entry. A NULL or blank
+  name is only possible in a v3 dataset if the import was incomplete or the
+  metadata was mislabelled, so it fails readiness rather than serving
+  summaries with silently missing names. The same NULL is perfectly valid —
+  and stays serviceable — under v1/v2, where the column simply predates the
+  dataset.
+
+**Production is still on the older dataset**, and schema v3 is the eventual
+activation dataset. Production may jump straight from its current dataset to
+v3: activating v2 first is *not* required, and v2 stays recognized only for
+compatibility.
 
 Safe activation order:
 
-1. apply migration `0004` to the remote D1 database — additive only; the
-   deployed v1 dataset keeps serving throughout
-2. deploy the Worker — still reading the v1 dataset, fail-closed on SG codes
-3. release the mobile client that renders `additionalRequirements` and stays
-   backward-compatible with the pre-v2/v1 response while rollout is in
-   progress
+1. apply the outstanding remote migrations — `0004` and `0005` — to the remote
+   D1 database. Both are additive; the deployed older dataset keeps serving
+   throughout, its rows simply carrying a NULL `proper_shipping_name`
+2. deploy the Worker — still reading the old dataset, fail-closed on SG codes,
+   and returning `properShippingName: null` in `dgSummaries`
+3. release the mobile client that renders `additionalRequirements` and handles
+   `dgSummaries` with a nullable `properShippingName`, staying
+   backward-compatible with the old response while rollout is in progress
 4. only after that compatible mobile client is available, import the schema
-   v2 dataset — readiness flips to v2 only after the final `dataset_version`
+   v3 dataset — readiness flips to v3 only after the final `dataset_version`
    write, once every row is in place
 
 Steps 1 and 2 may safely be completed beforehand, independently of the
-client. **Schema v2 dataset activation/import (step 4) must never precede the
-compatible mobile release (step 3):** a v2 dataset can return `decision.level
-= 0` together with a non-empty `additionalRequirements` list, and a client
-that ignores that field would show such a pair as unrestricted while an
-obligation is outstanding. Step 4 is the actual feature/data activation
-point — everything before it is infrastructure that stays inert under v1.
+client. **Schema-v3 dataset activation/import (step 4) must never precede the
+compatible mobile release (step 3):** a v2/v3 dataset can return
+`decision.level = 0` together with a non-empty `additionalRequirements` list,
+and a client that ignores that field would show such a pair as unrestricted
+while an obligation is outstanding. Step 4 is the actual feature/data
+activation point — everything before it is infrastructure that stays inert
+under the old dataset.
 
 No production operation (migration, deployment, or dataset import) is
 performed as part of this PR.

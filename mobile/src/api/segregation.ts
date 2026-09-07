@@ -139,12 +139,36 @@ export interface SegregationBatchSummary {
   maxRequiredLevel: 1 | 2 | 3 | 4 | null;
 }
 
+/**
+ * One publicly visible DG profile. `properShippingName` is null only while
+ * the service still runs against a pre-schema-v3 dataset — the client decides
+ * how to present that, and the API never substitutes a placeholder name.
+ */
+export interface DgSummaryProfile {
+  primaryClass: string;
+  subsidiaryRisks: string[];
+  properShippingName: string | null;
+}
+
+/**
+ * Compact DG description of one input UN number. `variantCount` is the number
+ * of dataset variants behind it, which can exceed `profiles.length` when
+ * variants differ only in fields the API does not expose.
+ */
+export interface DgSummary {
+  unNumber: string;
+  variantCount: number;
+  profiles: DgSummaryProfile[];
+}
+
 export interface SegregationBatchResult {
   input: {
     unNumbers: string[];
   };
   summary: SegregationBatchSummary;
   pairs: SegregationBatchPairResult[];
+  /** Same order as `input.unNumbers`, one entry per input UN number. */
+  dgSummaries: DgSummary[];
 }
 
 export async function checkSegregationBatch(

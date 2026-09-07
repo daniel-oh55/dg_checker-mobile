@@ -2,6 +2,7 @@ import { getDatasetStatus } from './data/dataset-status';
 import { findDgEntriesByUnNumber, findDgEntriesByUnNumbers } from './data/dg-entries';
 import { loadSegregationRuleSet } from './data/segregation-rules';
 import { loadSgRuleSet } from './data/sg-rules';
+import { buildDgSummary } from './domain/dg-summary';
 import { evaluateResolvedUnPair } from './domain/evaluate-un-pair';
 import type { ResolvedUnPairEvaluation } from './domain/evaluate-un-pair';
 import type { DgEntry } from './domain/types';
@@ -295,11 +296,22 @@ async function handleSegregationCheckBatch(request: Request, env: Env): Promise<
     return errorResponse(500, 'INTERNAL_ERROR', 'Unable to complete segregation check.');
   }
 
+  // `dgSummaries` is additive over the PR 13 batch contract and is built
+  // from the entries already loaded above — no extra query. It is ordered to
+  // match `input.unNumbers` position for position, so a client can index into
+  // it directly. Every summary describes DG identity only (class, subsidiary
+  // risks, proper shipping name); it never carries a segregation decision,
+  // and PSN never influenced one.
+  const dgSummaries = canonicalUnNumbers.map((unNumber) =>
+    buildDgSummary(unNumber, entriesByUnNumber.get(unNumber) ?? []),
+  );
+
   return Response.json({
     ok: true,
     input: { unNumbers: canonicalUnNumbers },
     summary: buildBatchSummary(canonicalUnNumbers.length, pairs),
     pairs,
+    dgSummaries,
   });
 }
 

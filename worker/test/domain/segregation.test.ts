@@ -71,6 +71,9 @@ function makeEntry(overrides: Partial<DgEntry> = {}): DgEntry {
   return {
     unNumber: String(unSequence),
     variantKey: 'default',
+    // Null by default: the segregation engine never reads the proper shipping
+    // name, so these fixtures deliberately do not carry one.
+    properShippingName: null,
     primaryClass: '3',
     subsidiaryRisks: [],
     segregationGroups: [],

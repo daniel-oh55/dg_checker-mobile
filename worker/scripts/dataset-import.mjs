@@ -1,6 +1,6 @@
 // Offline import harness for the private, authorized DG dataset. Validates
 // a canonical JSON snapshot and generates deterministic SQL compatible with
-// migrations 0001-0004. Node built-ins only — no dependencies. `fs` is
+// migrations 0001-0005. Node built-ins only — no dependencies. `fs` is
 // imported dynamically inside main() so this module stays importable (for
 // its pure validate/build-sql exports) from environments without real
 // filesystem access, such as the Vitest/Workers test pool.
@@ -9,10 +9,17 @@
 //   node worker/scripts/dataset-import.mjs validate <input.json>
 //   node worker/scripts/dataset-import.mjs build-sql <input.json> <output.sql>
 
-// Schema 2 adds `sgRules` to the dataset root and `sourceToken` to every
-// class rule. Validation stays strict in both directions: unknown fields are
-// still rejected, and every new field has a mandatory, checked shape.
-export const SCHEMA_VERSION = 2;
+// Schema 2 added `sgRules` to the dataset root and `sourceToken` to every
+// class rule. Schema 3 adds `properShippingName` to every DG entry.
+// Validation stays strict in both directions: unknown fields are still
+// rejected, and every new field has a mandatory, checked shape.
+//
+// properShippingName is display/reference data only — the segregation engine
+// never reads it. It is mandatory and non-empty in the canonical snapshot
+// (the authorized source populates it for every emitted row), even though
+// the D1 column stays nullable so schema v1/v2 rows imported before this
+// contract existed remain serviceable during a staged rollout.
+export const SCHEMA_VERSION = 3;
 
 export class DatasetValidationError extends Error {
   constructor(errors) {
@@ -30,6 +37,7 @@ const ROOT_KEYS = new Set(['schemaVersion', 'datasetVersion', 'dgEntries', 'clas
 const DG_ENTRY_KEYS = new Set([
   'unNumber',
   'variantKey',
+  'properShippingName',
   'primaryClass',
   'subsidiaryRisks',
   'segregationGroups',
@@ -86,6 +94,7 @@ function validateDgEntry(entry, index, errors, seen) {
   const {
     unNumber,
     variantKey,
+    properShippingName,
     primaryClass,
     subsidiaryRisks,
     segregationGroups,
@@ -98,6 +107,9 @@ function validateDgEntry(entry, index, errors, seen) {
   }
   if (typeof variantKey !== 'string' || variantKey.length === 0) {
     errors.push(`${path}.variantKey must be a non-empty string.`);
+  }
+  if (typeof properShippingName !== 'string' || properShippingName.trim().length === 0) {
+    errors.push(`${path}.properShippingName must be a non-empty string.`);
   }
   if (typeof primaryClass !== 'string' || primaryClass.length === 0) {
     errors.push(`${path}.primaryClass must be a non-empty string.`);
@@ -337,6 +349,10 @@ export function summarizeDataset(dataset) {
     datasetVersion: dataset.datasetVersion,
     dgEntryCount: dataset.dgEntries.length,
     uniqueUnNumberCount: unNumbers.size,
+    properShippingNameCount: dataset.dgEntries.filter(
+      (e) => typeof e.properShippingName === 'string' && e.properShippingName.length > 0,
+    ).length,
+    distinctProperShippingNameCount: new Set(dataset.dgEntries.map((e) => e.properShippingName)).size,
     classRuleCount: dataset.classRules.length,
     classRuleXCount: dataset.classRules.filter((rule) => rule.sourceToken === 'X').length,
     primaryClassCount: primaryClasses.size,
@@ -408,14 +424,15 @@ export function buildSql(dataset) {
     const values = batch
       .map(
         (e) =>
-          `(${sqlString(e.unNumber)}, ${sqlString(e.variantKey)}, ${sqlString(e.primaryClass)}, ` +
+          `(${sqlString(e.unNumber)}, ${sqlString(e.variantKey)}, ${sqlString(e.properShippingName)}, ` +
+          `${sqlString(e.primaryClass)}, ` +
           `${sqlString(JSON.stringify(e.subsidiaryRisks))}, ${sqlString(JSON.stringify(e.segregationGroups))}, ` +
           `${sqlString(JSON.stringify(e.segregationCodes))}, ${sqlStringOrNull(e.compatibilityGroup)})`,
       )
       .join(',\n  ');
     lines.push(
       'INSERT INTO dg_entries ' +
-        '(un_number, variant_key, primary_class, subsidiary_risks_json, segregation_groups_json, segregation_codes_json, compatibility_group) ' +
+        '(un_number, variant_key, proper_shipping_name, primary_class, subsidiary_risks_json, segregation_groups_json, segregation_codes_json, compatibility_group) ' +
         `VALUES\n  ${values};`,
     );
   }
@@ -493,6 +510,11 @@ async function main() {
   console.log(`Dataset version: ${summary.datasetVersion}`);
   console.log(`DG entries: ${summary.dgEntryCount}`);
   console.log(`Unique UN numbers: ${summary.uniqueUnNumberCount}`);
+  console.log(
+    `Proper shipping names: ${summary.properShippingNameCount} populated ` +
+      `(${summary.dgEntryCount - summary.properShippingNameCount} missing, ` +
+      `${summary.distinctProperShippingNameCount} distinct)`,
+  );
   console.log(`Class rules: ${summary.classRuleCount} (source token X -> level 0: ${summary.classRuleXCount})`);
   console.log(`Primary classes: ${summary.primaryClassCount}`);
   console.log(`UN numbers with multiple variants: ${summary.multiVariantUnNumberCount}`);

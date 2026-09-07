@@ -1,5 +1,5 @@
 // Reproducible converter: authorized private DATA_TABLE_DGL.xlsx + Segregation.xlsx
-// -> canonical dataset JSON matching the schema v2 import contract (dataset-import.mjs).
+// -> canonical dataset JSON matching the schema v3 import contract (dataset-import.mjs).
 //
 // Fail-closed by construction. The critical invariant is that no authorized
 // source row may silently disappear because this converter does not
@@ -10,7 +10,9 @@
 //   - every SG row becomes an automatically evaluable rule, an
 //     ADDITIONAL_REQUIREMENT, a REVIEW_ONLY, a RESERVED, or a hard failure;
 //   - every non-empty subsidiary-hazard cell becomes resolved hazard classes
-//     or an explicit UNRESOLVED_* token.
+//     or an explicit UNRESOLVED_* token;
+//   - every emitted DG row carries the proper shipping name from its own
+//     source row, or the whole conversion fails.
 //
 // Unknown data never becomes CLEAR by omission. This module never invents
 // regulatory meaning for ambiguous source content.
@@ -19,7 +21,7 @@
 //   node scripts/authorized-dataset-convert.mjs \
 //     --dgl private-data/DATA_TABLE_DGL.xlsx \
 //     --segregation private-data/Segregation.xlsx \
-//     --dataset-version authorized-source-v2 \
+//     --dataset-version authorized-source-v3 \
 //     --output private-data/authorized-dataset.json
 
 import { SCHEMA_VERSION, validateDataset } from './dataset-import.mjs';
@@ -55,7 +57,13 @@ const SGG_TOKEN_PATTERN = /^SGG\d+$/;
 const SG_TOKEN_PATTERN = /^SG\d+$/;
 const DASH_VALUES = new Set(['–', '-', '—']);
 
-const REQUIRED_DGL_HEADERS = ['UN No.', 'Class or division', 'Subsidiary hazard(s)', 'Segregation'];
+const REQUIRED_DGL_HEADERS = [
+  'UN No.',
+  'Proper shipping name (PSN)',
+  'Class or division',
+  'Subsidiary hazard(s)',
+  'Segregation',
+];
 const DGL_SHEET_NAME = 'TRIM';
 const SEG_SHEET_NAME = 'SEG.TABLE';
 const SG_SHEET_NAME = 'SG';
@@ -96,6 +104,34 @@ export function extractCellText(value) {
     return { kind: 'unknown', text: JSON.stringify(value) };
   }
   return { kind: 'unknown', text: String(value) };
+}
+
+/**
+ * Normalizes an authorized "Proper shipping name (PSN)" cell to a stable
+ * single-line string.
+ *
+ * The PSN is display/reference data, never a regulatory input, so this
+ * deliberately does the minimum that makes an API value stable: it unwraps
+ * the ExcelJS representation (rich text / hyperlink) and collapses runs of
+ * whitespace — including newlines and NBSP — to single spaces before
+ * trimming. Wording is otherwise preserved exactly: nothing is translated,
+ * re-cased, expanded, re-punctuated, or dropped, and "N.O.S." and every
+ * other qualifier survives verbatim.
+ *
+ * Only a textual cell is accepted — extractCellText already resolves rich
+ * text and hyperlinks down to a string, so anything still non-textual (a
+ * date, a formula object, a bare number) is an unrecognized source shape.
+ * Returns null for that, and for a cell holding no usable text; the caller
+ * must treat null as a hard conversion failure rather than an empty name.
+ */
+export function normalizePsnCell(rawValue) {
+  const { kind, text } = extractCellText(rawValue);
+  if (kind !== 'string' || typeof text !== 'string') {
+    return null;
+  }
+
+  const collapsed = text.replace(/\s+/gu, ' ').trim();
+  return collapsed.length > 0 ? collapsed : null;
 }
 
 /** True for a merged cell that is a continuation of another (master) cell — i.e. it carries no independent value. */
@@ -622,6 +658,13 @@ function buildHeaderIndex(headerRow, columnCount) {
  * counts summary. Skips merged continuation rows (wrapped PSN text with no
  * independent UN/class/etc. identity) and rejects UN numbers that cannot
  * unambiguously normalize to 4 digits.
+ *
+ * Every emitted entry carries the proper shipping name read from its own
+ * source row — the same row that produced the UN number, class, subsidiary
+ * hazards and segregation field, so PSN can never drift out of alignment
+ * with the regulatory columns. An emitted row whose PSN cell yields no
+ * usable text fails the whole conversion: schema v3 requires a real name for
+ * every entry, and this converter never substitutes a placeholder.
  */
 export function convertDglSheet(worksheet) {
   if (!worksheet) {
@@ -638,9 +681,11 @@ export function convertDglSheet(worksheet) {
   const classColumn = headerIndex.get('Class or division');
   const subsidiaryColumn = headerIndex.get('Subsidiary hazard(s)');
   const segregationColumn = headerIndex.get('Segregation');
+  const psnColumn = headerIndex.get('Proper shipping name (PSN)');
 
   const nextVariantKey = createVariantKeyAssigner();
   const dgEntries = [];
+  const missingPsnRowNumbers = [];
   const counts = {
     sourceRows: 0,
     continuationRowsSkipped: 0,
@@ -656,6 +701,9 @@ export function convertDglSheet(worksheet) {
     unresolvedSubsidiaryEntries: 0,
     sgCodeEntries: 0,
     sggGroupEntries: 0,
+    psnPopulatedEntries: 0,
+    psnMissingEntries: 0,
+    psnWhitespaceNormalizedEntries: 0,
   };
 
   for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber++) {
@@ -693,15 +741,44 @@ export function convertDglSheet(worksheet) {
     if (segregationCodes.length > 0) counts.sgCodeEntries++;
     if (segregationGroups.length > 0) counts.sggGroupEntries++;
 
+    const rawPsn = row.getCell(psnColumn).value;
+    const properShippingName = normalizePsnCell(rawPsn);
+    // Compared against the unwrapped source text, not the raw cell object, so
+    // the count means "normalization changed the name" for a rich-text or
+    // hyperlink cell too — not just for a plain string.
+    const rawPsnText = extractCellText(rawPsn).text;
+    if (properShippingName === null) {
+      // Recorded, not thrown on immediately: a human re-verifying the source
+      // needs to know how many rows are affected, not just the first one.
+      counts.psnMissingEntries++;
+      missingPsnRowNumbers.push(rowNumber);
+    } else {
+      counts.psnPopulatedEntries++;
+      if (rawPsnText !== properShippingName) {
+        counts.psnWhitespaceNormalizedEntries++;
+      }
+    }
+
     dgEntries.push({
       unNumber: un.value,
       variantKey: nextVariantKey(un.value),
+      properShippingName,
       primaryClass,
       subsidiaryRisks,
       segregationGroups,
       segregationCodes,
       compatibilityGroup,
     });
+  }
+
+  if (missingPsnRowNumbers.length > 0) {
+    const shown = missingPsnRowNumbers.slice(0, 10).join(', ');
+    const more = missingPsnRowNumbers.length > 10 ? `, ... (${missingPsnRowNumbers.length - 10} more)` : '';
+    throw new Error(
+      `${missingPsnRowNumbers.length} DGL row(s) have no usable "Proper shipping name (PSN)" value ` +
+        `(row ${shown}${more}). Schema v3 requires a proper shipping name for every DG entry; ` +
+        're-verify the authorized source rather than importing a placeholder.',
+    );
   }
 
   return { dgEntries, counts };
@@ -837,6 +914,10 @@ async function main() {
   console.log(`Entries with unresolved SP/source subsidiary values: ${dglCounts.unresolvedSubsidiaryEntries}`);
   console.log(`Entries with SG codes: ${dglCounts.sgCodeEntries}`);
   console.log(`Entries with SGG groups: ${dglCounts.sggGroupEntries}`);
+  console.log(`Entries with a proper shipping name: ${dglCounts.psnPopulatedEntries}`);
+  console.log(`Entries missing a proper shipping name: ${dglCounts.psnMissingEntries}`);
+  console.log(`  of which whitespace-normalized: ${dglCounts.psnWhitespaceNormalizedEntries}`);
+  console.log(`Distinct proper shipping names: ${new Set(validated.dgEntries.map((e) => e.properShippingName)).size}`);
   console.log(`Matrix labels: ${segCounts.matrixLabelCount} (cells: ${segCounts.matrixCellCount})`);
   console.log(`Class rules generated: ${classRules.length}`);
   console.log(`  numeric pairs: ${segCounts.numericPairs}`);

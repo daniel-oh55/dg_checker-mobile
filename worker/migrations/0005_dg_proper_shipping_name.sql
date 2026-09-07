@@ -1,0 +1,22 @@
+-- PR 14: DG summaries and proper shipping names.
+--
+-- dg_entries gains proper_shipping_name, the authorized "Proper shipping name
+-- (PSN)" column of the DGL source row that produced the entry. It is
+-- display/reference data for the batch DG summary contract only — the
+-- segregation engine never reads it, and no decision depends on it.
+--
+-- The column is deliberately NULLABLE even though the canonical schema-v3
+-- snapshot guarantees a non-empty name for every entry. This migration is
+-- additive so it can be applied while production still serves its older
+-- schema v1/v2 dataset: those rows keep a NULL name and stay fully
+-- serviceable until the schema-v3 dataset is imported. SQLite cannot add a
+-- NOT NULL column without a default, and a default would mean inventing a
+-- placeholder name, which this project never does. Completeness is enforced
+-- where it belongs instead: the converter fails on a missing source PSN, the
+-- import harness rejects a snapshot with a blank one, and schema-v3 dataset
+-- readiness fails if any persisted row is NULL or blank.
+--
+-- dg_entries is not rebuilt, and no index is added: proper_shipping_name is
+-- never a query predicate, only a projected column.
+
+ALTER TABLE dg_entries ADD COLUMN proper_shipping_name TEXT;

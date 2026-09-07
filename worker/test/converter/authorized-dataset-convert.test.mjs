@@ -16,6 +16,7 @@ import {
   createVariantKeyAssigner,
   extractCellText,
   isContinuationRow,
+  normalizePsnCell,
   normalizeUnNumberCell,
   parsePrimaryClass,
   parseSegregationField,
@@ -367,6 +368,40 @@ describe('validateMatrixSymmetry', () => {
   });
 });
 
+describe('normalizePsnCell — proper shipping name normalization', () => {
+  it('returns a plain string name unchanged', () => {
+    assert.equal(normalizePsnCell('SYNTHETIC TEST SUBSTANCE'), 'SYNTHETIC TEST SUBSTANCE');
+  });
+
+  it('unwraps rich text and hyperlink cells', () => {
+    assert.equal(normalizePsnCell({ richText: [{ text: 'SYNTHETIC ' }, { text: 'NAME' }] }), 'SYNTHETIC NAME');
+    assert.equal(normalizePsnCell({ text: 'SYNTHETIC NAME', hyperlink: 'https://example.test' }), 'SYNTHETIC NAME');
+  });
+
+  it('trims and collapses whitespace — newlines and NBSP included — to a single line', () => {
+    assert.equal(normalizePsnCell('  SYNTHETIC  NAME\n  CONTINUED '), 'SYNTHETIC NAME CONTINUED');
+    assert.equal(normalizePsnCell('SYNTHETIC NAME'), 'SYNTHETIC NAME');
+  });
+
+  it('preserves authorized wording — case, punctuation, qualifiers and N.O.S.', () => {
+    const name = 'SYNTHETIC substance, solid, n.o.s. (with 2-ethyl qualifier), STABILIZED';
+    assert.equal(normalizePsnCell(name), name);
+  });
+
+  it('returns null for a cell with no usable text', () => {
+    assert.equal(normalizePsnCell(null), null);
+    assert.equal(normalizePsnCell(undefined), null);
+    assert.equal(normalizePsnCell(''), null);
+    assert.equal(normalizePsnCell('   '), null);
+  });
+
+  it('returns null for a non-textual cell rather than stringifying it', () => {
+    assert.equal(normalizePsnCell(42), null);
+    assert.equal(normalizePsnCell(new Date('2025-03-08')), null);
+    assert.equal(normalizePsnCell({ formula: 'A1' }), null);
+  });
+});
+
 describe('convertDglSheet — full-row pipeline', () => {
   it('skips merged continuation rows and reports the skipped count', () => {
     const masterUn = cell(9010);
@@ -402,7 +437,7 @@ describe('convertDglSheet — full-row pipeline', () => {
     );
   });
 
-  it('never leaks descriptive DGL fields (PSN, etc.) into the canonical entry', () => {
+  it('emits exactly the schema v3 canonical fields — PSN included, other DGL columns not', () => {
     const worksheet = makeDglWorksheet(HEADERS, [
       [cell(9030), cell('SOME SYNTHETIC PROPER SHIPPING NAME'), cell('3'), cell('–'), cell('–')],
     ]);
@@ -411,12 +446,96 @@ describe('convertDglSheet — full-row pipeline', () => {
     assert.deepEqual(Object.keys(dgEntries[0]).sort(), [
       'compatibilityGroup',
       'primaryClass',
+      'properShippingName',
       'segregationCodes',
       'segregationGroups',
       'subsidiaryRisks',
       'unNumber',
       'variantKey',
     ]);
+    assert.equal(dgEntries[0].properShippingName, 'SOME SYNTHETIC PROPER SHIPPING NAME');
+  });
+
+  it('reads the proper shipping name from the same source row as the regulatory columns', () => {
+    const worksheet = makeDglWorksheet(HEADERS, [
+      [cell(9031), cell('SYNTHETIC ROW ONE'), cell('3'), cell('6.1'), cell('SG9001')],
+      [cell(9032), cell('SYNTHETIC ROW TWO'), cell('8'), cell('–'), cell('SGG9001')],
+      [cell(9033), cell('SYNTHETIC ROW THREE'), cell('4.1'), cell('5.1'), cell('–')],
+    ]);
+
+    const { dgEntries } = convertDglSheet(worksheet);
+    assert.deepEqual(
+      dgEntries.map((e) => [e.unNumber, e.properShippingName, e.primaryClass, [...e.subsidiaryRisks]]),
+      [
+        ['9031', 'SYNTHETIC ROW ONE', '3', ['6.1']],
+        ['9032', 'SYNTHETIC ROW TWO', '8', []],
+        ['9033', 'SYNTHETIC ROW THREE', '4.1', ['5.1']],
+      ],
+    );
+    assert.deepEqual(dgEntries[0].segregationCodes, ['SG9001']);
+    assert.deepEqual(dgEntries[1].segregationGroups, ['SGG9001']);
+  });
+
+  it('reads a rich-text / hyperlink proper shipping name', () => {
+    const worksheet = makeDglWorksheet(HEADERS, [
+      [
+        cell(9034),
+        cell({ richText: [{ text: 'SYNTHETIC RICH ' }, { text: 'TEXT NAME' }] }),
+        cell('3'),
+        cell('–'),
+        cell('–'),
+      ],
+      [
+        cell(9035),
+        cell({ text: 'SYNTHETIC LINKED NAME', hyperlink: 'https://example.test' }),
+        cell('3'),
+        cell('–'),
+        cell('–'),
+      ],
+    ]);
+
+    const { dgEntries } = convertDglSheet(worksheet);
+    assert.deepEqual(dgEntries.map((e) => e.properShippingName), [
+      'SYNTHETIC RICH TEXT NAME',
+      'SYNTHETIC LINKED NAME',
+    ]);
+  });
+
+  it('counts populated and whitespace-normalized proper shipping names', () => {
+    const worksheet = makeDglWorksheet(HEADERS, [
+      [cell(9036), cell('SYNTHETIC CLEAN NAME'), cell('3'), cell('–'), cell('–')],
+      [cell(9037), cell('  SYNTHETIC   PADDED\nNAME '), cell('3'), cell('–'), cell('–')],
+    ]);
+
+    const { dgEntries, counts } = convertDglSheet(worksheet);
+    assert.equal(counts.psnPopulatedEntries, 2);
+    assert.equal(counts.psnMissingEntries, 0);
+    assert.equal(counts.psnWhitespaceNormalizedEntries, 1);
+    assert.equal(dgEntries[1].properShippingName, 'SYNTHETIC PADDED NAME');
+  });
+
+  it('fails the conversion when an emitted row has no usable proper shipping name', () => {
+    for (const emptyValue of [null, '', '   ']) {
+      const worksheet = makeDglWorksheet(HEADERS, [
+        [cell(9038), cell('SYNTHETIC PRESENT NAME'), cell('3'), cell('–'), cell('–')],
+        [cell(9039), cell(emptyValue), cell('3'), cell('–'), cell('–')],
+      ]);
+      assert.throws(
+        () => convertDglSheet(worksheet),
+        /1 DGL row\(s\) have no usable "Proper shipping name \(PSN\)" value \(row 3\)/,
+      );
+    }
+  });
+
+  it('throws when the proper shipping name header is missing (no column-position guessing)', () => {
+    const worksheet = makeDglWorksheet(
+      ['UN No.', 'Class or division', 'Subsidiary hazard(s)', 'Segregation'],
+      [[cell(9041), cell('3'), cell('–'), cell('–')]],
+    );
+    assert.throws(
+      () => convertDglSheet(worksheet),
+      /missing required header\(s\): Proper shipping name \(PSN\)/,
+    );
   });
 
   it('throws when a required header is missing (no silent column-shift guessing)', () => {
