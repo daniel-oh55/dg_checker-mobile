@@ -1,47 +1,78 @@
 import { StatusBar } from 'expo-status-bar';
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import {
-  checkSegregation,
+  checkSegregationBatch,
   SegregationCheckError,
-  type SegregationCheckResult,
+  type SegregationBatchResult,
 } from './src/api/segregation';
+import { BatchResultSummary } from './src/components/BatchResultSummary';
+import { DgSummaryCard } from './src/components/DgSummaryCard';
+import { PairResultCard } from './src/components/PairResultCard';
+import { UnInputGrid } from './src/components/UnInputGrid';
+import {
+  appHeaderText,
+  type Bilingual,
+  errorPresentation,
+  operationalNote,
+  palette,
+  validateActiveInputs,
+} from './src/ui/segregation-presentation';
+
+const MAX_SLOTS = 10;
 
 export default function App() {
-  const [leftUnNumber, setLeftUnNumber] = useState('');
-  const [rightUnNumber, setRightUnNumber] = useState('');
+  const [inputCount, setInputCount] = useState(2);
+  const [unInputs, setUnInputs] = useState<string[]>(Array(MAX_SLOTS).fill(''));
   const [loading, setLoading] = useState(false);
-  const [validationMessage, setValidationMessage] = useState<string | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [result, setResult] = useState<SegregationCheckResult | null>(null);
+  const [errorState, setErrorState] = useState<{ message: Bilingual; unNumbers?: string[] } | null>(null);
+  const [result, setResult] = useState<SegregationBatchResult | null>(null);
 
   const requestSeq = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
 
-  const canSubmit = leftUnNumber.trim().length > 0 && rightUnNumber.trim().length > 0 && !loading;
+  const activeInputs = unInputs.slice(0, inputCount);
+  const allEmpty = activeInputs.every((value) => value.trim().length === 0);
+  const validationMessage = allEmpty ? null : validateActiveInputs(activeInputs);
+  const canSubmit = !validationMessage && !loading;
 
-  async function handleCheck() {
-    const trimmedLeft = leftUnNumber.trim();
-    const trimmedRight = rightUnNumber.trim();
-
+  function invalidateResult() {
     setResult(null);
-    setErrorMessage(null);
+    setErrorState(null);
+    abortRef.current?.abort();
+    requestSeq.current += 1;
+  }
 
-    if (trimmedLeft.length === 0 || trimmedRight.length === 0) {
-      setValidationMessage('Enter both UN numbers.');
-      return;
-    }
-    setValidationMessage(null);
+  function handleChangeInput(index: number, value: string) {
+    setUnInputs((prev) => {
+      const next = [...prev];
+      next[index] = value;
+      return next;
+    });
+    invalidateResult();
+  }
+
+  function handleChangeCount(count: number) {
+    setInputCount(count);
+    invalidateResult();
+  }
+
+  async function handleSubmit() {
+    if (!canSubmit) return;
+
+    Keyboard.dismiss();
+    setResult(null);
+    setErrorState(null);
 
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -51,22 +82,17 @@ export default function App() {
     setLoading(true);
 
     try {
-      const checkResult = await checkSegregation(trimmedLeft, trimmedRight, controller.signal);
+      const batchResult = await checkSegregationBatch(activeInputs, controller.signal);
       if (requestSeq.current !== seq) return;
-      setResult(checkResult);
+      setResult(batchResult);
     } catch (error) {
       if (requestSeq.current !== seq) return;
       if (error instanceof Error && error.name === 'AbortError') return;
 
       if (error instanceof SegregationCheckError) {
-        if (error.code === 'DG_NOT_FOUND' && error.unNumbers && error.unNumbers.length > 0) {
-          const list = error.unNumbers.map((un) => `UN ${un}`).join(', ');
-          setErrorMessage(`${list} ${error.unNumbers.length > 1 ? 'were' : 'was'} not found in the current dataset.`);
-        } else {
-          setErrorMessage(error.message);
-        }
+        setErrorState(errorPresentation(error));
       } else {
-        setErrorMessage('Unable to complete the check. Please try again.');
+        setErrorState({ message: { ko: '검사를 완료할 수 없습니다. 다시 시도해주세요.', en: 'Unable to complete the check.' } });
       }
     } finally {
       if (requestSeq.current === seq) {
@@ -75,197 +101,212 @@ export default function App() {
     }
   }
 
+  const pairCountLabel = useMemo(
+    () => (result ? `${result.pairs.length}` : ''),
+    [result],
+  );
+
   return (
-    <KeyboardAvoidingView
-      style={styles.flex}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
+    <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
-        <Text style={styles.title}>DG Segregation</Text>
-        <Text style={styles.subtitle}>Enter two UN numbers to check segregation.</Text>
+        <Text style={styles.title}>{appHeaderText.title}</Text>
+        <Text style={styles.subtitleKo}>{appHeaderText.primary.ko}</Text>
+        <Text style={styles.subtitleEn}>{appHeaderText.primary.en}</Text>
 
-        <View style={styles.field}>
-          <Text style={styles.label}>UN Number 1</Text>
-          <TextInput
-            style={styles.input}
-            value={leftUnNumber}
-            onChangeText={setLeftUnNumber}
-            placeholder="e.g. UN3077"
-            keyboardType="numbers-and-punctuation"
-            autoCapitalize="characters"
-            autoCorrect={false}
+        <View style={styles.inputCard}>
+          <UnInputGrid
+            inputCount={inputCount}
+            unInputs={unInputs}
+            onChangeInput={handleChangeInput}
+            onChangeCount={handleChangeCount}
           />
-        </View>
 
-        <View style={styles.field}>
-          <Text style={styles.label}>UN Number 2</Text>
-          <TextInput
-            style={styles.input}
-            value={rightUnNumber}
-            onChangeText={setRightUnNumber}
-            placeholder="e.g. UN1993"
-            keyboardType="numbers-and-punctuation"
-            autoCapitalize="characters"
-            autoCorrect={false}
-          />
-        </View>
-
-        {validationMessage && <Text style={styles.validationText}>{validationMessage}</Text>}
-
-        <Pressable
-          style={[styles.button, !canSubmit && styles.buttonDisabled]}
-          onPress={handleCheck}
-          disabled={!canSubmit}
-        >
-          {loading ? (
-            <View style={styles.buttonContent}>
-              <ActivityIndicator color="#fff" />
-              <Text style={styles.buttonText}>Checking...</Text>
+          {validationMessage && (
+            <View style={styles.validationBlock}>
+              <Text style={styles.validationKo}>{validationMessage.ko}</Text>
+              <Text style={styles.validationEn}>{validationMessage.en}</Text>
             </View>
-          ) : (
-            <Text style={styles.buttonText}>Check Segregation</Text>
           )}
-        </Pressable>
 
-        {errorMessage && (
+          <Pressable
+            style={[styles.button, !canSubmit && styles.buttonDisabled]}
+            onPress={handleSubmit}
+            disabled={!canSubmit}
+            accessibilityRole="button"
+            accessibilityLabel="격리조건 확인 / Check segregation"
+          >
+            {loading ? (
+              <View style={styles.buttonContent}>
+                <ActivityIndicator color="#fff" />
+                <Text style={styles.buttonText}>확인 중... / Checking...</Text>
+              </View>
+            ) : (
+              <View style={styles.buttonContent}>
+                <Text style={styles.buttonText}>격리조건 확인</Text>
+                <Text style={styles.buttonTextEn}>Check Segregation</Text>
+              </View>
+            )}
+          </Pressable>
+        </View>
+
+        {errorState && (
           <View style={styles.errorCard}>
-            <Text style={styles.errorText}>{errorMessage}</Text>
+            <Text style={styles.errorKo}>{errorState.message.ko}</Text>
+            <Text style={styles.errorEn}>{errorState.message.en}</Text>
           </View>
         )}
 
         {result && (
-          <View style={styles.resultCard}>
-            <Text style={styles.resultHeading}>{headingForStatus(result.decision.status)}</Text>
-            {result.decision.status === 'SEGREGATION_REQUIRED' && result.decision.level !== null && (
-              <Text style={styles.resultLevel}>Level {result.decision.level}</Text>
-            )}
-            <Text style={styles.resultReason}>{result.decision.reason}</Text>
-            <Text style={styles.resultMeta}>
-              {result.variants.left} × {result.variants.right} variant combination
-              {result.variants.evaluatedPairs === 1 ? '' : 's'} evaluated
-            </Text>
-          </View>
+          <>
+            <BatchResultSummary summary={result.summary} />
+
+            <View style={styles.sectionHeaderBlock}>
+              <Text style={styles.sectionTitleKo}>조합별 결과 ({pairCountLabel})</Text>
+              <Text style={styles.sectionTitleEn}>Pair Details</Text>
+            </View>
+            {result.pairs.map((pair, index) => (
+              <PairResultCard key={`${pair.leftUnNumber}-${pair.rightUnNumber}-${index}`} pair={pair} />
+            ))}
+
+            <View style={styles.sectionHeaderBlock}>
+              <Text style={styles.sectionTitleKo}>입력 화물 정보</Text>
+              <Text style={styles.sectionTitleEn}>DG Summary</Text>
+            </View>
+            {result.dgSummaries.map((dgSummary) => (
+              <DgSummaryCard key={dgSummary.unNumber} summary={dgSummary} />
+            ))}
+
+            <View style={styles.operationalNoteBlock}>
+              <Text style={styles.operationalNoteKo}>{operationalNote.ko}</Text>
+              <Text style={styles.operationalNoteEn}>{operationalNote.en}</Text>
+            </View>
+          </>
         )}
 
-        <StatusBar style="auto" />
+        <StatusBar style="dark" />
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
 
-function headingForStatus(status: SegregationCheckResult['decision']['status']): string {
-  switch (status) {
-    case 'CLEAR':
-      return 'No segregation required';
-    case 'SEGREGATION_REQUIRED':
-      return 'Segregation required';
-    case 'REVIEW_REQUIRED':
-      return 'Manual review required';
-  }
-}
-
 const styles = StyleSheet.create({
   flex: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: palette.background,
   },
   container: {
     flexGrow: 1,
-    padding: 24,
-    paddingTop: 64,
+    padding: 20,
+    paddingTop: 56,
+    paddingBottom: 48,
   },
   title: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '700',
-    marginBottom: 4,
+    color: palette.navy,
+    marginBottom: 6,
   },
-  subtitle: {
-    fontSize: 15,
-    color: '#444',
-    marginBottom: 24,
-  },
-  field: {
-    marginBottom: 16,
-  },
-  label: {
+  subtitleKo: {
     fontSize: 14,
     fontWeight: '600',
-    marginBottom: 6,
-    color: '#222',
+    color: palette.textPrimary,
   },
-  input: {
+  subtitleEn: {
+    fontSize: 12,
+    color: palette.textSecondary,
+    marginBottom: 20,
+  },
+  inputCard: {
+    backgroundColor: palette.card,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#999',
-    borderRadius: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 16,
+    borderColor: palette.border,
+    padding: 16,
   },
-  validationText: {
-    color: '#B00020',
+  validationBlock: {
+    marginTop: 4,
     marginBottom: 12,
-    fontSize: 14,
+  },
+  validationKo: {
+    color: palette.errorText,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  validationEn: {
+    color: palette.errorText,
+    fontSize: 12,
   },
   button: {
-    backgroundColor: '#1565C0',
+    backgroundColor: palette.primary,
     borderRadius: 8,
-    paddingVertical: 16,
+    paddingVertical: 14,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 8,
+    minHeight: 48,
   },
   buttonDisabled: {
-    backgroundColor: '#9BB6D6',
+    backgroundColor: palette.primaryDisabled,
   },
   buttonContent: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'baseline',
     gap: 8,
   },
   buttonText: {
     color: '#fff',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
+  },
+  buttonTextEn: {
+    color: '#E4ECF5',
+    fontSize: 12,
   },
   errorCard: {
-    marginTop: 24,
-    padding: 16,
+    marginTop: 20,
+    padding: 14,
     borderRadius: 8,
-    backgroundColor: '#FDECEA',
+    backgroundColor: palette.errorBg,
     borderWidth: 1,
-    borderColor: '#F5C2C0',
+    borderColor: palette.errorBorder,
   },
-  errorText: {
-    color: '#8A1C1C',
-    fontSize: 15,
-  },
-  resultCard: {
-    marginTop: 24,
-    padding: 16,
-    borderRadius: 8,
-    backgroundColor: '#F2F6FA',
-    borderWidth: 1,
-    borderColor: '#CBDCEB',
-  },
-  resultHeading: {
-    fontSize: 18,
+  errorKo: {
+    color: palette.errorText,
+    fontSize: 14,
     fontWeight: '700',
-    marginBottom: 4,
-    color: '#0D2E4E',
   },
-  resultLevel: {
-    fontSize: 15,
-    fontWeight: '600',
-    marginBottom: 8,
-    color: '#0D2E4E',
-  },
-  resultReason: {
-    fontSize: 15,
-    color: '#22384F',
-    marginBottom: 12,
-  },
-  resultMeta: {
+  errorEn: {
+    color: palette.errorText,
     fontSize: 12,
-    color: '#5A6B7C',
+    marginTop: 2,
+  },
+  sectionHeaderBlock: {
+    marginTop: 24,
+    marginBottom: 10,
+  },
+  sectionTitleKo: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: palette.navy,
+  },
+  sectionTitleEn: {
+    fontSize: 12,
+    color: palette.textSecondary,
+  },
+  operationalNoteBlock: {
+    marginTop: 12,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: palette.border,
+  },
+  operationalNoteKo: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: palette.textSecondary,
+  },
+  operationalNoteEn: {
+    fontSize: 11,
+    color: palette.textSecondary,
+    marginTop: 2,
   },
 });
