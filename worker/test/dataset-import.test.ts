@@ -302,6 +302,81 @@ describe('validateDataset — SG rules', () => {
   });
 });
 
+// A class-targeting SG rule whose target has no row in the class matrix fails
+// *open* at runtime: it matches nothing, so the segregation level it was meant
+// to impose silently disappears. Membership in this dataset's own classRules
+// is therefore the contract — not a syntactic pattern, which would accept any
+// class-shaped label.
+describe('validateDataset — SG class targets must exist in classRules', () => {
+  // validateDataset comes from an untyped .mjs module, so the shapes it
+  // returns are annotated locally rather than inferred.
+  interface SgRuleShape {
+    ruleType: string;
+    targets: string[];
+  }
+  interface ClassRuleShape {
+    classA: string;
+    classB: string;
+  }
+
+  it('accepts a DIRECT_CLASS target present in the class matrix', () => {
+    const dataset = validateDataset(cloneFixture());
+    const rule = (dataset.sgRules as SgRuleShape[]).find((entry) => entry.ruleType === 'DIRECT_CLASS');
+
+    expect(rule?.targets).toEqual(['TEST_B']);
+    const matrixLabels = new Set(
+      (dataset.classRules as ClassRuleShape[]).flatMap((entry) => [entry.classA, entry.classB]),
+    );
+    expect(rule?.targets.every((target) => matrixLabels.has(target))).toBe(true);
+  });
+
+  it('accepts an AS_FOR_CLASS target present in the class matrix', () => {
+    const dataset = validateDataset(cloneFixture());
+    const rule = (dataset.sgRules as SgRuleShape[]).find((entry) => entry.ruleType === 'AS_FOR_CLASS');
+
+    expect(rule?.targets).toEqual(['TEST_B']);
+  });
+
+  it('rejects a DIRECT_CLASS rule targeting a class with no row in classRules', () => {
+    const bad = cloneFixture();
+    bad.sgRules[0].targets = ['NOT_A_CLASS'];
+    expect(() => validateDataset(bad)).toThrow(
+      /sgRules\[0\]\.targets must all be class labels present in classRules; unknown target\(s\): "NOT_A_CLASS"/,
+    );
+  });
+
+  it('rejects an AS_FOR_CLASS rule targeting a class with no row in classRules', () => {
+    const bad = cloneFixture();
+    bad.sgRules[2].targets = ['NOT_A_CLASS'];
+    expect(() => validateDataset(bad)).toThrow(
+      /sgRules\[2\]\.targets must all be class labels present in classRules; unknown target\(s\): "NOT_A_CLASS"/,
+    );
+  });
+
+  it('rejects a rule that mixes a valid target with an unknown one', () => {
+    const bad = cloneFixture();
+    bad.sgRules[0].targets = ['TEST_B', 'NOT_A_CLASS'];
+    expect(() => validateDataset(bad)).toThrow(/unknown target\(s\): "NOT_A_CLASS"/);
+  });
+
+  it('rejects a class-shaped target that this dataset\'s matrix does not publish', () => {
+    // The point of membership over syntax: "3" looks exactly like a real class
+    // label, but this dataset's matrix has no row for it.
+    const bad = cloneFixture();
+    bad.sgRules[0].targets = ['3'];
+    expect(() => validateDataset(bad)).toThrow(/unknown target\(s\): "3"/);
+  });
+
+  it('leaves DIRECT_SGG targets governed by their own contract', () => {
+    // Only class-targeting rule types consult the matrix; an SGG token must
+    // not have to appear in classRules.
+    const dataset = validateDataset(cloneFixture());
+    expect((dataset.sgRules as SgRuleShape[]).find((entry) => entry.ruleType === 'DIRECT_SGG')?.targets).toEqual([
+      'SGG9001',
+    ]);
+  });
+});
+
 describe('buildSql', () => {
   it('generates deterministic SQL containing the expected canonical rows', () => {
     const dataset = validateDataset(cloneFixture());

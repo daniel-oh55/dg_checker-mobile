@@ -1,4 +1,4 @@
-import { dedupeAdditionalRequirements, reviewReason } from './segregation';
+import { REVIEW_REQUIRED_REASON, dedupeAdditionalRequirements } from './segregation';
 import type { PairEvaluation, SegregationDecision } from './segregation';
 import type { AdditionalRequirement } from './sg-rules';
 
@@ -25,7 +25,10 @@ export interface AggregatedEvaluation {
  * Pure — no I/O.
  *
  * - If any variant pair is REVIEW_REQUIRED, the aggregate is REVIEW_REQUIRED
- *   (fail-closed), and the union of that pair's blockers is reported.
+ *   (fail-closed). Its reason is the same stable generic sentence every
+ *   review decision carries: the per-pair blockers can embed private source
+ *   content, so the union of them is deliberately not surfaced here — see
+ *   REVIEW_REQUIRED_REASON.
  * - Otherwise the aggregate takes the maximum numeric level across variant
  *   pairs. A weaker variant never dilutes a stronger one, and the reason
  *   states plainly when the shown result is the strictest of several
@@ -48,11 +51,10 @@ export function aggregatePairEvaluations(
   );
   const variantResolution: VariantResolution = allAgree ? 'UNIFORM' : 'STRICTEST_OF_MULTIPLE_VARIANTS';
 
-  const reviewing = evaluations.filter((evaluation) => evaluation.decision.status === 'REVIEW_REQUIRED');
-  if (reviewing.length > 0) {
-    const blockers = [...new Set(reviewing.flatMap((evaluation) => [...evaluation.reviewBlockers]))].sort();
+  const reviewing = evaluations.some((evaluation) => evaluation.decision.status === 'REVIEW_REQUIRED');
+  if (reviewing) {
     return {
-      decision: { status: 'REVIEW_REQUIRED', level: null, reason: reviewReason(blockers) },
+      decision: { status: 'REVIEW_REQUIRED', level: null, reason: REVIEW_REQUIRED_REASON },
       additionalRequirements,
       variantResolution,
     };

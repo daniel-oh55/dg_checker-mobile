@@ -154,6 +154,10 @@ describe('getDatasetStatus', () => {
 // generated import SQL now deletes the two readiness metadata keys before
 // any table replacement, so a refresh in progress is correctly unready even
 // though both runtime tables already contain rows again.
+//
+// Cloudflare's remote bulk `d1 execute --file` import rolls back on failure,
+// so this ordering is defense-in-depth for the execution paths that carry no
+// such guarantee — manual/one-at-a-time statements, and a truncated artifact.
 describe('getDatasetStatus — partial dataset refresh regression (PR 6 correction)', () => {
   beforeEach(async () => {
     await resetDatasetState();

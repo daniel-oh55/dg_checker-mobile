@@ -15,6 +15,7 @@ import {
   convertSgSheet,
   createVariantKeyAssigner,
   extractCellText,
+  isClass1Label,
   isContinuationRow,
   normalizePsnCell,
   normalizeUnNumberCell,
@@ -26,6 +27,7 @@ import {
   resolveClassToken,
   validateMatrixSymmetry,
 } from '../../scripts/authorized-dataset-convert.mjs';
+import { SCHEMA_VERSION, validateDataset } from '../../scripts/dataset-import.mjs';
 
 // --- Fake ExcelJS-shaped worksheet for convertDglSheet tests -----------------
 
@@ -403,20 +405,209 @@ describe('normalizePsnCell — proper shipping name normalization', () => {
 });
 
 describe('convertDglSheet — full-row pipeline', () => {
-  it('skips merged continuation rows and reports the skipped count', () => {
+  it('appends a single PSN continuation fragment to the master logical entry', () => {
     const masterUn = cell(9010);
     const worksheet = makeDglWorksheet(HEADERS, [
-      [masterUn, cell('SYNTHETIC ENTRY (a)'), cell('3'), cell('–'), cell('–')],
-      [continuationCell(masterUn), cell('SYNTHETIC ENTRY (b)'), cell('3'), cell('–'), cell('–')],
-      [continuationCell(masterUn), cell('SYNTHETIC ENTRY (c)'), cell('3'), cell('–'), cell('–')],
+      [masterUn, cell('SYNTHETIC ENTRY ALPHA'), cell('3'), cell('–'), cell('–')],
+      [continuationCell(masterUn), cell('(qualifier one)'), cell(null), cell(null), cell(null)],
       [cell(9011), cell('SYNTHETIC ENTRY 2'), cell('8'), cell('–'), cell('–')],
     ]);
 
     const { dgEntries, counts } = convertDglSheet(worksheet);
-    assert.equal(counts.continuationRowsSkipped, 2);
+
+    // A continuation row is not a new DgEntry — it is the tail of the one above.
+    assert.equal(counts.continuationRows, 1);
+    assert.equal(counts.continuationPsnFragments, 1);
+    assert.equal(counts.entriesWithContinuationPsn, 1);
     assert.equal(counts.sourceRows, 2);
     assert.equal(dgEntries.length, 2);
     assert.deepEqual(dgEntries.map((e) => e.unNumber), ['9010', '9011']);
+    assert.equal(dgEntries[0].properShippingName, 'SYNTHETIC ENTRY ALPHA (qualifier one)');
+    assert.equal(dgEntries[1].properShippingName, 'SYNTHETIC ENTRY 2');
+    assert.equal(counts.psnPopulatedEntries, 2);
+    assert.equal(counts.psnMissingEntries, 0);
+  });
+
+  it('appends multiple PSN continuation fragments in source row order', () => {
+    const masterUn = cell(9012);
+    const worksheet = makeDglWorksheet(HEADERS, [
+      [masterUn, cell('SYNTHETIC ENTRY BETA'), cell('4.1'), cell('–'), cell('–')],
+      [continuationCell(masterUn), cell('(qualifier one);'), cell(null), cell(null), cell(null)],
+      [continuationCell(masterUn), cell('(qualifier two)'), cell(null), cell(null), cell(null)],
+    ]);
+
+    const { dgEntries, counts } = convertDglSheet(worksheet);
+
+    assert.equal(dgEntries.length, 1);
+    assert.equal(counts.continuationPsnFragments, 2);
+    assert.equal(
+      dgEntries[0].properShippingName,
+      'SYNTHETIC ENTRY BETA (qualifier one); (qualifier two)',
+    );
+  });
+
+  it('treats a fully blank continuation row as harmless', () => {
+    const masterUn = cell(9013);
+    for (const blankValue of [null, '', '   ']) {
+      const worksheet = makeDglWorksheet(HEADERS, [
+        [masterUn, cell('SYNTHETIC ENTRY GAMMA'), cell('3'), cell('–'), cell('–')],
+        [continuationCell(masterUn), cell(blankValue), cell(null), cell(null), cell(null)],
+      ]);
+
+      const { dgEntries, counts } = convertDglSheet(worksheet);
+
+      assert.equal(dgEntries.length, 1);
+      assert.equal(counts.continuationRows, 1);
+      assert.equal(counts.continuationBlankRows, 1);
+      assert.equal(counts.continuationPsnFragments, 0);
+      assert.equal(counts.entriesWithContinuationPsn, 0);
+      assert.equal(dgEntries[0].properShippingName, 'SYNTHETIC ENTRY GAMMA');
+    }
+  });
+
+  it('applies the ordinary PSN whitespace normalization across reassembled fragments', () => {
+    const masterUn = cell(9014);
+    const worksheet = makeDglWorksheet(HEADERS, [
+      [masterUn, cell('  SYNTHETIC   ENTRY\nDELTA '), cell('3'), cell('–'), cell('–')],
+      [continuationCell(masterUn), cell('\t(qualifier  one) '), cell(null), cell(null), cell(null)],
+      [continuationCell(masterUn), cell(' (qualifier\ntwo)\t'), cell(null), cell(null), cell(null)],
+    ]);
+
+    const { dgEntries } = convertDglSheet(worksheet);
+
+    // One stable, single-line normalized string — no wording dropped, re-cased
+    // or re-punctuated, and exactly one space between every reassembled part.
+    assert.equal(
+      dgEntries[0].properShippingName,
+      'SYNTHETIC ENTRY DELTA (qualifier one) (qualifier two)',
+    );
+  });
+
+  it('fails the conversion when a continuation row carries independent regulatory data', () => {
+    const regulatoryColumns = [
+      ['Class or division', 2, '8'],
+      ['Subsidiary hazard(s)', 3, '6.1'],
+      ['Segregation', 4, 'SG9001'],
+    ];
+
+    for (const [columnName, columnIndex, independentValue] of regulatoryColumns) {
+      const masterUn = cell(9015);
+      const continuationRow = [
+        continuationCell(masterUn),
+        cell('(qualifier one)'),
+        cell(null),
+        cell(null),
+        cell(null),
+      ];
+      continuationRow[columnIndex] = cell(independentValue);
+
+      const worksheet = makeDglWorksheet(HEADERS, [
+        [masterUn, cell('SYNTHETIC ENTRY EPSILON'), cell('3'), cell('–'), cell('–')],
+        continuationRow,
+      ]);
+
+      assert.throws(
+        () => convertDglSheet(worksheet),
+        new RegExp(
+          `row 3 is a merged continuation row but carries an independent value in regulatory column\\(s\\): ` +
+            columnName.replace(/[()]/g, '\\$&'),
+        ),
+      );
+    }
+  });
+
+  it('does not fail on a continuation row whose regulatory cells are merged continuations', () => {
+    const masterUn = cell(9016);
+    const masterClass = cell('3');
+    const masterSubsidiary = cell('–');
+    const masterSegregation = cell('–');
+    const worksheet = makeDglWorksheet(HEADERS, [
+      [masterUn, cell('SYNTHETIC ENTRY ZETA'), masterClass, masterSubsidiary, masterSegregation],
+      [
+        continuationCell(masterUn),
+        cell('(qualifier one)'),
+        continuationCell(masterClass),
+        continuationCell(masterSubsidiary),
+        continuationCell(masterSegregation),
+      ],
+    ]);
+
+    const { dgEntries } = convertDglSheet(worksheet);
+    assert.equal(dgEntries.length, 1);
+    assert.equal(dgEntries[0].properShippingName, 'SYNTHETIC ENTRY ZETA (qualifier one)');
+  });
+
+  it('fails the conversion when a continuation fragment has no master entry to attach to', () => {
+    const orphanMaster = cell(9017);
+    const worksheet = makeDglWorksheet(HEADERS, [
+      [continuationCell(orphanMaster), cell('(qualifier one)'), cell(null), cell(null), cell(null)],
+    ]);
+
+    assert.throws(() => convertDglSheet(worksheet), /no preceding master DG row to attach it to/);
+  });
+
+  it('fails the conversion when a logical entry has no usable final proper shipping name', () => {
+    const masterUn = cell(9018);
+    const worksheet = makeDglWorksheet(HEADERS, [
+      [cell(9019), cell('SYNTHETIC PRESENT NAME'), cell('3'), cell('–'), cell('–')],
+      [masterUn, cell('   '), cell('3'), cell('–'), cell('–')],
+      [continuationCell(masterUn), cell(null), cell(null), cell(null), cell(null)],
+    ]);
+
+    assert.throws(
+      () => convertDglSheet(worksheet),
+      /1 DGL row\(s\) have no usable "Proper shipping name \(PSN\)" value \(row 3\)/,
+    );
+  });
+
+  it('fails the conversion on a malformed non-empty UN source value', () => {
+    for (const malformed of ['12A4', 'UN9001', '99999', new Date('2025-03-08')]) {
+      const worksheet = makeDglWorksheet(HEADERS, [
+        [cell(9021), cell('SYNTHETIC PRESENT NAME'), cell('3'), cell('–'), cell('–')],
+        [cell(malformed), cell('SYNTHETIC MALFORMED UN ROW'), cell('3'), cell('–'), cell('–')],
+      ]);
+
+      assert.throws(
+        () => convertDglSheet(worksheet),
+        /row 3 has no usable "UN No." value but is not blank/,
+      );
+    }
+  });
+
+  it('fails the conversion when a row has no UN number but carries meaningful data', () => {
+    const meaningfulRows = [
+      [cell(null), cell('SYNTHETIC ORPHAN NAME'), cell(null), cell(null), cell(null)],
+      [cell(null), cell(null), cell('3'), cell(null), cell(null)],
+      [cell(null), cell(null), cell(null), cell('6.1'), cell(null)],
+      [cell(''), cell(null), cell(null), cell(null), cell('SG9001')],
+    ];
+
+    for (const orphanRow of meaningfulRows) {
+      const worksheet = makeDglWorksheet(HEADERS, [
+        [cell(9022), cell('SYNTHETIC PRESENT NAME'), cell('3'), cell('–'), cell('–')],
+        orphanRow,
+      ]);
+
+      assert.throws(
+        () => convertDglSheet(worksheet),
+        /row 3 has no usable "UN No." value but is not blank/,
+      );
+    }
+  });
+
+  it('skips a truly blank row without creating a DG entry', () => {
+    const worksheet = makeDglWorksheet(HEADERS, [
+      [cell(9023), cell('SYNTHETIC PRESENT NAME'), cell('3'), cell('–'), cell('–')],
+      [cell(null), cell(null), cell(null), cell(null), cell(null)],
+      [cell('  '), cell('   '), cell(''), cell(null), cell('\t')],
+    ]);
+
+    const { dgEntries, counts } = convertDglSheet(worksheet);
+
+    assert.equal(dgEntries.length, 1);
+    assert.equal(counts.blankRowsSkipped, 2);
+    assert.equal(counts.sourceRows, 3);
+    assert.equal(dgEntries[0].unNumber, '9023');
   });
 
   it('assigns deterministic distinct variant keys to duplicate UN rows', () => {
@@ -544,5 +735,124 @@ describe('convertDglSheet — full-row pipeline', () => {
       [[cell(9040), cell('X'), cell('–'), cell('–')]],
     );
     assert.throws(() => convertDglSheet(worksheet), /missing required header/);
+  });
+});
+
+// The stricter SG class-target rule in dataset-import.mjs requires every
+// DIRECT_CLASS / AS_FOR_CLASS target to name a label the dataset's own class
+// matrix publishes. The converter emits the authorized matrix's *collapsed*
+// Class 1 labels ("1.1 1.2 1.5", ...), not bare divisions, and resolves SG
+// class targets through the same labels — so the two halves must agree.
+// This pins that agreement on the real label set, with a synthetic matrix.
+describe('SG class targets resolve to labels the generated class matrix publishes', () => {
+  function syntheticMatrix() {
+    // Every published pair carries a level, so buildClassRules emits a row for
+    // each label — including the Class 1 rows, whose Class 1 <-> Class 1 cells
+    // are "*" in the authorized source and are omitted exactly as there.
+    return (a, b) => (isClass1Label(a) && isClass1Label(b) ? '*' : 2);
+  }
+
+  it('produces a dataset whose SG class targets all validate', () => {
+    const { rules: classRules } = buildClassRules(syntheticMatrix(), ALL_MATRIX_LABELS);
+    const matrixLabels = new Set(classRules.flatMap((rule) => [rule.classA, rule.classB]));
+
+    // Class 1 <-> Class 1 is omitted, yet the Class 1 labels still appear via
+    // their pairs with ordinary classes — which is what makes them valid
+    // targets at all.
+    for (const label of ALL_MATRIX_LABELS) {
+      assert.ok(matrixLabels.has(label), `matrix label ${label} is missing from generated class rules`);
+    }
+
+    const sgRules = [
+      // Prose forms the real SG sheet uses, parsed by the real parser.
+      parseSgRow('SG1', '"Away from" class 3.'),
+      parseSgRow('SG2', '"Separated from" goods of classes 2.1 and 3.'),
+      parseSgRow('SG3', '"Separated from" division 1.1, 1.2, and 1.5.'),
+      parseSgRow('SG4', '"Separated from" class 1.'),
+      parseSgRow('SG5', 'Segregation as for class 4.1.'),
+    ];
+    for (const rule of sgRules) {
+      assert.ok(
+        ['DIRECT_CLASS', 'AS_FOR_CLASS'].includes(rule.ruleType),
+        `expected a class-targeting rule for ${rule.code}, got ${rule.ruleType}`,
+      );
+      for (const target of rule.targets) {
+        assert.ok(matrixLabels.has(target), `SG target ${target} has no row in the class matrix`);
+      }
+    }
+
+    const dataset = validateDataset({
+      schemaVersion: SCHEMA_VERSION,
+      datasetVersion: 'synthetic-class-target-v1',
+      dgEntries: [
+        {
+          unNumber: '9050',
+          variantKey: 'V1',
+          properShippingName: 'SYNTHETIC CLASS TARGET ENTRY',
+          primaryClass: '3',
+          subsidiaryRisks: [],
+          segregationGroups: [],
+          segregationCodes: ['SG1'],
+          compatibilityGroup: null,
+        },
+      ],
+      classRules,
+      sgRules,
+    });
+
+    assert.equal(dataset.sgRules.length, 5);
+  });
+
+  it('rejects a class target the generated matrix does not publish', () => {
+    const { rules: classRules } = buildClassRules(syntheticMatrix(), ALL_MATRIX_LABELS);
+
+    for (const ruleType of ['DIRECT_CLASS', 'AS_FOR_CLASS']) {
+      assert.throws(
+        () =>
+          validateDataset({
+            schemaVersion: SCHEMA_VERSION,
+            datasetVersion: 'synthetic-class-target-v1',
+            dgEntries: [],
+            classRules,
+            sgRules: [
+              {
+                code: 'SG1',
+                ruleType,
+                targets: ['NOT_A_CLASS'],
+                level: ruleType === 'DIRECT_CLASS' ? 2 : null,
+                sourceText: 'synthetic rule targeting a class with no matrix row',
+              },
+            ],
+          }),
+        /unknown target\(s\): "NOT_A_CLASS"/,
+      );
+    }
+  });
+
+  it('rejects a bare Class 1 division target, which the collapsed matrix never publishes', () => {
+    // "1.1" is class-shaped and real, but the authorized matrix publishes only
+    // the collapsed row "1.1 1.2 1.5" — a loose pattern would have let this
+    // through and matched nothing at runtime.
+    const { rules: classRules } = buildClassRules(syntheticMatrix(), ALL_MATRIX_LABELS);
+
+    assert.throws(
+      () =>
+        validateDataset({
+          schemaVersion: SCHEMA_VERSION,
+          datasetVersion: 'synthetic-class-target-v1',
+          dgEntries: [],
+          classRules,
+          sgRules: [
+            {
+              code: 'SG1',
+              ruleType: 'DIRECT_CLASS',
+              targets: ['1.1'],
+              level: 2,
+              sourceText: 'synthetic rule targeting an uncollapsed Class 1 division',
+            },
+          ],
+        }),
+      /unknown target\(s\): "1\.1"/,
+    );
   });
 });

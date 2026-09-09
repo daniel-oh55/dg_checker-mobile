@@ -1,5 +1,6 @@
 import { env, exports } from 'cloudflare:workers';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { REVIEW_REQUIRED_REASON } from '../src/domain/segregation';
 import { markSyntheticDatasetReady, seedClassRule, seedDgEntry } from './helpers/seed';
 
 // Synthetic UN numbers, classes and rules for testing only. These have no
@@ -284,7 +285,8 @@ describe('POST /segregation/check', () => {
       const body = (await response.json()) as { decision: { status: string; level: number | null; reason: string } };
       expect(body.decision.status).toBe('REVIEW_REQUIRED');
       expect(body.decision.level).toBeNull();
-      expect(body.decision.reason).toContain('CLASS1_TO_CLASS1_UNRESOLVED');
+      // The Class 1 <-> Class 1 blocker stays internal; the public reason is generic.
+      expect(body.decision.reason).toBe(REVIEW_REQUIRED_REASON);
     });
   });
 

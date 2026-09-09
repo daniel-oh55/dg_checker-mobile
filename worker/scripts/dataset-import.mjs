@@ -186,7 +186,44 @@ function validateClassRule(rule, index, errors, seen) {
   }
 }
 
-function validateSgRule(rule, index, errors, seen) {
+/**
+ * Collects every class label the validated class-rule matrix actually
+ * publishes, in this same dataset. This is the authority for what a
+ * class-targeting SG rule may name: a target outside it has no matrix row, so
+ * at runtime it would simply never match — silently suppressing a real
+ * segregation level instead of failing closed. Deriving the set from the
+ * dataset (rather than a hard-coded list) keeps it correct for any authorized
+ * source revision, and for synthetic datasets.
+ */
+function collectClassRuleLabels(classRules) {
+  const labels = new Set();
+  if (!Array.isArray(classRules)) return labels;
+  for (const rule of classRules) {
+    if (!isPlainObject(rule)) continue;
+    if (typeof rule.classA === 'string' && rule.classA.length > 0) labels.add(rule.classA);
+    if (typeof rule.classB === 'string' && rule.classB.length > 0) labels.add(rule.classB);
+  }
+  return labels;
+}
+
+/**
+ * Every class label an SG rule targets must be one the class-rule matrix in
+ * this dataset publishes. Membership, not syntax: a permissive pattern would
+ * accept a label that looks class-shaped but has no matrix row, and such a
+ * rule fails *open* at runtime — it matches nothing, so the level it was
+ * meant to impose silently disappears.
+ */
+function validateClassTargets(path, targets, classRuleLabels, errors) {
+  const unknown = targets.filter((target) => !classRuleLabels.has(target));
+  if (unknown.length > 0) {
+    errors.push(
+      `${path}.targets must all be class labels present in classRules; ` +
+        `unknown target(s): ${unknown.map((target) => JSON.stringify(target)).join(', ')}.`,
+    );
+  }
+}
+
+function validateSgRule(rule, index, errors, seen, classRuleLabels) {
   const path = `sgRules[${index}]`;
   if (!isPlainObject(rule)) {
     errors.push(`${path} must be an object.`);
@@ -245,10 +282,14 @@ function validateSgRule(rule, index, errors, seen) {
     if (ruleType === 'DIRECT_UN' && !targets.every((target) => UN_NUMBER_PATTERN.test(target))) {
       errors.push(`${path}.targets must all be canonical 4-digit UN numbers for ruleType DIRECT_UN.`);
     }
+    if (ruleType === 'DIRECT_CLASS') {
+      validateClassTargets(path, targets, classRuleLabels, errors);
+    }
   } else if (ruleType === 'AS_FOR_CLASS') {
     if (targets.length === 0) {
       errors.push(`${path}.targets must be non-empty for ruleType AS_FOR_CLASS.`);
     }
+    validateClassTargets(path, targets, classRuleLabels, errors);
     if (level !== null) {
       // The level comes from the substituted class matrix lookup at runtime,
       // never from the rule row itself.
@@ -308,7 +349,8 @@ export function validateDataset(raw) {
     errors.push('sgRules must be an array.');
   } else {
     const seenSgCodes = new Set();
-    raw.sgRules.forEach((rule, index) => validateSgRule(rule, index, errors, seenSgCodes));
+    const classRuleLabels = collectClassRuleLabels(raw.classRules);
+    raw.sgRules.forEach((rule, index) => validateSgRule(rule, index, errors, seenSgCodes, classRuleLabels));
   }
 
   if (errors.length > 0) {
@@ -397,12 +439,19 @@ export const INSERT_BATCH_SIZE = 100;
  * rows to stay within D1's per-statement size limit.
  *
  * The two readiness metadata keys are deleted first, before the table
- * replacement even begins, so a snapshot that runs partway (some rows
- * inserted, statement stream cut off before the closing upserts) never
- * leaves getDatasetStatus() reading old metadata against a half-replaced
- * dataset. Readiness is only restored by the final upserts once every row
- * has been inserted, and dataset_version — the key getDatasetStatus()
- * requires alongside the schema version — is written last of all.
+ * replacement begins, and are only rewritten by the closing upserts once
+ * every row is in — dataset_version, the key getDatasetStatus() requires
+ * alongside the schema version, last of all.
+ *
+ * That ordering is defense-in-depth, not a workaround for the remote import
+ * path: Cloudflare's remote `d1 execute --file` bulk import rolls the whole
+ * operation back on failure and blocks database requests while it runs, so a
+ * failed remote bulk import does not leave partially committed statements.
+ * The ordering matters for the execution paths that carry no such guarantee —
+ * statements run manually or one at a time, and a syntactically valid but
+ * truncated/incomplete artifact — and for any future path without the same
+ * bulk-import atomicity. In those cases readiness stays false against a
+ * half-replaced dataset instead of old metadata vouching for new rows.
  */
 export function buildSql(dataset) {
   const entries = [...dataset.dgEntries].sort(
