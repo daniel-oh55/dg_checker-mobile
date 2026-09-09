@@ -240,6 +240,27 @@ as its `UNRESOLVED_*` token: the hazard's *existence* is why the pair fails
 closed and must stay visible, but its source payload is withheld. Withholding
 detail never softens a decision — the status and level are unchanged.
 
+`primaryClass` follows the same rule. `parsePrimaryClass` deliberately keeps a
+"Class or division" cell it cannot map as the stored primary class: an unmapped
+class matches no class rule, so the pair fails closed to `REVIEW_REQUIRED` with
+no special-case logic. That value is therefore **internal** regulatory data,
+and `dgSummaries[].profiles[].primaryClass` reports it as
+`UNSPECIFIED_PRIMARY_HAZARD` instead of publishing it verbatim.
+
+The public check is an **allowlist** of the classes a DG entry can legitimately
+carry — the six Class 1 divisions (`1.1`–`1.6`) and the 14 ordinary classes
+(`2.1`, `2.2`, `2.3`, `3`, `4.1`, `4.2`, `4.3`, `5.1`, `5.2`, `6.1`, `6.2`,
+`7`, `8`, `9`). A recognized class passes through unchanged, so normal Class
+display is unaffected; everything else is withheld without having to be
+enumerated. Note these are Class 1 *divisions*, not the collapsed matrix labels
+(`"1.1 1.2 1.5"`, `"1.3 1.6"`) — those label a segregation-matrix row and are
+never a DG entry's class.
+
+Raw source-derived class content is not part of the public API contract. The
+engine still evaluates the **internal** `DgEntry.primaryClass`, so the
+placeholder is a presentation value only and never reaches a lookup: an
+unsupported class stays `REVIEW_REQUIRED` and never becomes `CLEAR`.
+
 ## Converter fail-closed invariant
 
 No authorized source row may silently disappear because the converter does not
@@ -378,6 +399,12 @@ ever chosen as representative. Instead:
 - **Ordering** is deterministic, derived from the public fields only
   (`primaryClass`, then `subsidiaryRisks` joined, then `properShippingName`),
   never from SQLite row order. No severity ordering is implied.
+- **Withheld values are applied before the profile is built**, so they reach
+  neither the dedupe key nor the ordering. Two variants whose only difference
+  is an unmapped primary class therefore collapse into one profile — a client
+  cannot tell them apart, and a profile count that tracked the hidden payload
+  would itself disclose that the payloads differ. `variantCount` still reports
+  the true underlying `DgEntry` count.
 - **`properShippingName` may be `null`** while the service still runs against
   a pre-v3 dataset. The API never substitutes `"Unknown"`, `"N/A"` or any
   other placeholder — how to present a missing name is the client's decision.

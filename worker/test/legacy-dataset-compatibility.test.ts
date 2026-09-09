@@ -150,6 +150,129 @@ describe('staged rollout — a pre-schema-v3 dataset with NULL proper shipping n
   });
 });
 
+describe('production-v1 compatibility — this Worker deployed before schema v3 is activated', () => {
+  // The rollout order is Worker first, dataset second, so this code must be
+  // safe against the v1 dataset already in production: rows with NULL proper
+  // shipping names, an empty sg_rules table, NULL class-rule source tokens,
+  // and primary classes the current converter would not recognize. None of
+  // that may leak, and none of it may soften a decision.
+  //
+  // Synthetic data only — the legacy class below is invented, not a stored
+  // source value.
+  const LEGACY_UNMAPPED_CLASS = 'synthetic-legacy-unmapped-class-9350';
+  const UNSPECIFIED_PRIMARY_HAZARD = 'UNSPECIFIED_PRIMARY_HAZARD';
+
+  interface V1Fixture {
+    legacy: string;
+    canonicalLeft: string;
+    canonicalRight: string;
+  }
+
+  /** Seeds a v1-shaped dataset: NULL names, empty sg_rules, NULL source_token. */
+  async function seedProductionV1Shape(): Promise<V1Fixture> {
+    const legacy = nextUnNumber();
+    const canonicalLeft = nextUnNumber();
+    const canonicalRight = nextUnNumber();
+
+    await seedLegacyDgEntry(legacy, LEGACY_UNMAPPED_CLASS);
+    await seedLegacyDgEntry(canonicalLeft, '3');
+    await seedLegacyDgEntry(canonicalRight, '8');
+
+    // source_token stays NULL, exactly as a pre-0004 import left it.
+    await env.DB.prepare(
+      'INSERT INTO segregation_class_rules (class_a, class_b, level, source_token) VALUES (?, ?, ?, NULL)',
+    )
+      .bind('3', '8', 2)
+      .run();
+
+    // sg_rules is deliberately left empty: v1 has no SG content.
+    await setSchemaVersion('1', 'synthetic-legacy-v1');
+    return { legacy, canonicalLeft, canonicalRight };
+  }
+
+  beforeEach(async () => {
+    await resetDatasetState();
+  });
+
+  it('stays ready with NULL names, no SG rules and NULL source tokens', async () => {
+    await seedProductionV1Shape();
+
+    const sgRuleCount = await env.DB.prepare('SELECT COUNT(*) AS n FROM sg_rules').first<{ n: number }>();
+    expect(sgRuleCount?.n).toBe(0);
+    const namedCount = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM dg_entries WHERE proper_shipping_name IS NOT NULL',
+    ).first<{ n: number }>();
+    expect(namedCount?.n).toBe(0);
+
+    const status = await getDatasetStatus(env.DB);
+    expect(status).toEqual({ ready: true, schemaVersion: '1', datasetVersion: 'synthetic-legacy-v1' });
+  });
+
+  it('withholds a legacy unmapped primary class from the batch DG summary', async () => {
+    const { legacy, canonicalLeft } = await seedProductionV1Shape();
+
+    const response = await post('/segregation/check-batch', { unNumbers: [legacy, canonicalLeft] });
+    expect(response.status).toBe(200);
+    const rawBody = await response.text();
+
+    // The whole serialized body, not just the field this test models.
+    expect(rawBody).not.toContain(LEGACY_UNMAPPED_CLASS);
+    expect(rawBody).not.toContain('synthetic-legacy-unmapped');
+
+    const body = JSON.parse(rawBody) as {
+      pairs: Array<{ decision: { status: string; level: number | null } }>;
+      dgSummaries: Array<{
+        unNumber: string;
+        variantCount: number;
+        profiles: Array<{ primaryClass: string; properShippingName: string | null }>;
+      }>;
+    };
+
+    const summary = body.dgSummaries.find((entry) => entry.unNumber === legacy);
+    expect(summary?.variantCount).toBe(1);
+    expect(summary?.profiles[0].primaryClass).toBe(UNSPECIFIED_PRIMARY_HAZARD);
+    // A v1 row genuinely has no authorized name; null is still reported as null.
+    expect(summary?.profiles[0].properShippingName).toBeNull();
+    // An unmapped class matches no rule, so the pair still fails closed.
+    expect(body.pairs[0].decision.status).toBe('REVIEW_REQUIRED');
+    expect(body.pairs[0].decision.level).toBeNull();
+  });
+
+  it('keeps the single endpoint compatible and fail-closed for a legacy unmapped class', async () => {
+    const { legacy, canonicalLeft } = await seedProductionV1Shape();
+
+    const response = await post('/segregation/check', { leftUnNumber: legacy, rightUnNumber: canonicalLeft });
+    expect(response.status).toBe(200);
+    const rawBody = await response.text();
+
+    expect(rawBody).not.toContain(LEGACY_UNMAPPED_CLASS);
+    const body = JSON.parse(rawBody) as { ok: boolean; decision: { status: string; level: number | null } };
+    expect(body.ok).toBe(true);
+    expect(body.decision.status).toBe('REVIEW_REQUIRED');
+    expect(body.decision.level).toBeNull();
+  });
+
+  it('still resolves a v1 pair whose classes are recognized, and publishes them', async () => {
+    // The other half of the contract: withholding unmapped classes must not
+    // degrade a v1 dataset whose classes and rules are perfectly usable, even
+    // though every source_token is NULL.
+    const { canonicalLeft, canonicalRight } = await seedProductionV1Shape();
+
+    const response = await post('/segregation/check-batch', { unNumbers: [canonicalLeft, canonicalRight] });
+    expect(response.status).toBe(200);
+    const rawBody = await response.text();
+    const body = JSON.parse(rawBody) as {
+      pairs: Array<{ decision: { status: string; level: number | null } }>;
+      dgSummaries: Array<{ unNumber: string; profiles: Array<{ primaryClass: string }> }>;
+    };
+
+    expect(body.pairs[0].decision.status).toBe('SEGREGATION_REQUIRED');
+    expect(body.pairs[0].decision.level).toBe(2);
+    expect(body.dgSummaries.map((entry) => entry.profiles[0].primaryClass)).toEqual(['3', '8']);
+    expect(rawBody).not.toContain(UNSPECIFIED_PRIMARY_HAZARD);
+  });
+});
+
 describe('getDatasetStatus — schema v3', () => {
   beforeEach(async () => {
     await resetDatasetState();

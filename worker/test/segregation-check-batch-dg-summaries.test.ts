@@ -65,7 +65,9 @@ describe('POST /segregation/check-batch — dgSummaries', () => {
 
   it('reports class, subsidiary risks and proper shipping name for a single-variant UN number', async () => {
     const un = nextUnNumber();
-    const cls = nextClass('SINGLE');
+    // A recognized class, because that is what the summary publishes verbatim:
+    // an unmapped one is reported as UNSPECIFIED_PRIMARY_HAZARD instead.
+    const cls = '3';
     await seedClassRule(env.DB, cls, cls, 0);
     await seedDgEntry(env.DB, {
       unNumber: un,
@@ -151,7 +153,7 @@ describe('POST /segregation/check-batch — dgSummaries', () => {
 
   it('collapses variants that differ only in fields the API does not expose', async () => {
     const un = nextUnNumber();
-    const cls = nextClass('DEDUP');
+    const cls = '4.1';
     await seedClassRule(env.DB, cls, cls, 0);
     // Same class, same subsidiary risks, same name — the variants differ only
     // by variantKey and segregation codes/groups, none of which are exposed.
@@ -224,8 +226,11 @@ describe('POST /segregation/check-batch — dgSummaries', () => {
 
   it('sorts by class first, then subsidiary risks, then name', async () => {
     const un = nextUnNumber();
-    const clsA = nextClass('AAA');
-    const clsZ = `${clsA}_Z`;
+    // Two recognized classes that sort in this order. They have to be
+    // recognized for this test to mean anything: the public value of an
+    // unmapped class is a constant, so it could not order anything.
+    const clsA = '4.2';
+    const clsZ = '9';
     await seedClassRule(env.DB, clsA, clsA, 0);
     await seedClassRule(env.DB, clsZ, clsZ, 0);
     await seedClassRule(env.DB, clsA, clsZ, 0);
