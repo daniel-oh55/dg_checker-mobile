@@ -1,3 +1,4 @@
+import { PRIMARY_HAZARD_CLASSES } from './class-normalization';
 import type { DgEntry } from './types';
 
 /**
@@ -9,6 +10,11 @@ import type { DgEntry } from './types';
  * they exist to drive the engine, not to be rendered.
  */
 export interface DgSummaryProfile {
+  /**
+   * A recognized primary hazard class or division. A stored class outside the
+   * authorized vocabulary is reported as UNSPECIFIED_PRIMARY_HAZARD rather
+   * than verbatim — see `redactPrimaryClass`.
+   */
   readonly primaryClass: string;
   /**
    * Resolved hazard-class tokens. A subsidiary value the converter could not
@@ -46,6 +52,36 @@ function redactSubsidiaryRisks(risks: readonly string[]): string[] {
     }
   }
   return redacted;
+}
+
+/**
+ * Public stand-in for a primary hazard class the converter could not map.
+ *
+ * `parsePrimaryClass` deliberately keeps an unrecognized "Class or division"
+ * cell as the stored primary class: an unmapped class matches no class rule,
+ * so the pair fails closed to REVIEW_REQUIRED with no special-case logic.
+ * That makes the stored value private authorized source content, and
+ * publishing `primaryClass` verbatim handed it to any batch caller. The class
+ * being unusable is still reported — only the source payload is withheld.
+ */
+export const UNSPECIFIED_PRIMARY_HAZARD = 'UNSPECIFIED_PRIMARY_HAZARD';
+
+/** Allowlist, not a denylist: only the authorized vocabulary is publishable. */
+const RECOGNIZED_PRIMARY_CLASSES: ReadonlySet<string> = new Set<string>(PRIMARY_HAZARD_CLASSES);
+
+/**
+ * Maps a stored primary class to its public value: a recognized class or
+ * division passes through unchanged, anything else becomes
+ * UNSPECIFIED_PRIMARY_HAZARD. Pure.
+ *
+ * Membership is tested against the authorized vocabulary rather than by
+ * pattern-matching or by excluding known markers, so unmapped source prose, a
+ * malformed class-shaped value, an `UNRESOLVED_*` token and a legacy class
+ * stored by an older dataset are all withheld without needing to be
+ * enumerated.
+ */
+function redactPrimaryClass(primaryClass: string): string {
+  return RECOGNIZED_PRIMARY_CLASSES.has(primaryClass) ? primaryClass : UNSPECIFIED_PRIMARY_HAZARD;
 }
 
 /**
@@ -92,15 +128,19 @@ export function buildDgSummary(unNumber: string, entries: readonly DgEntry[]): D
   const uniqueProfiles = new Map<string, DgSummaryProfile>();
 
   for (const entry of entries) {
+    // Redaction happens here, before the profile is built, keyed or sorted, so
+    // no withheld value can reach the response or influence its shape.
+    const primaryClass = redactPrimaryClass(entry.primaryClass);
     const subsidiaryRisks = redactSubsidiaryRisks(entry.subsidiaryRisks);
     const profile: DgSummaryProfile = {
-      primaryClass: entry.primaryClass,
+      primaryClass,
       subsidiaryRisks,
       properShippingName: entry.properShippingName,
     };
     // Keyed on the visible fields exactly as serialized, so two variants are
-    // deduplicated only when a client could not tell them apart. The null
-    // name is keyed distinctly from any string name.
+    // deduplicated only when a client could not tell them apart — including
+    // two variants whose only difference is a withheld payload. The null name
+    // is keyed distinctly from any string name.
     const key = JSON.stringify([
       profile.primaryClass,
       subsidiaryRisks,

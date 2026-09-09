@@ -47,6 +47,24 @@ const CLASS1_DIVISION_TO_LABEL = new Map<string, string>([
 const CLASS1_LABEL_SET: ReadonlySet<string> = new Set<string>(CLASS1_MATRIX_LABELS);
 
 /**
+ * The six Class 1 divisions, which are what a DgEntry primary class actually
+ * holds for Class 1 — the collapsed labels above exist only as matrix lookup
+ * rows. Derived from the division map so the two can never drift apart.
+ */
+export const CLASS1_DIVISIONS: readonly string[] = [...CLASS1_DIVISION_TO_LABEL.keys()].sort();
+
+/**
+ * Every hazard class a DgEntry primary class can legitimately hold: the six
+ * Class 1 divisions plus the 14 ordinary classes. A stored primary class
+ * outside this set is source content the converter could not map, so it has
+ * no class rule and fails closed — see `parsePrimaryClass`.
+ */
+export const PRIMARY_HAZARD_CLASSES: readonly string[] = [
+  ...CLASS1_DIVISIONS,
+  ...ORDINARY_MATRIX_LABELS,
+];
+
+/**
  * Maps a hazard class token to the authorized matrix label used for
  * segregation-table lookups. Class 1 divisions collapse to their published
  * group row; every other token (including an already-collapsed group label)
