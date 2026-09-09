@@ -10,9 +10,42 @@ import type { DgEntry } from './types';
  */
 export interface DgSummaryProfile {
   readonly primaryClass: string;
+  /**
+   * Resolved hazard-class tokens. A subsidiary value the converter could not
+   * resolve mechanically is reported as UNSPECIFIED_SUBSIDIARY_HAZARD rather
+   * than as its `UNRESOLVED_*` token — see `redactSubsidiaryRisks`.
+   */
   readonly subsidiaryRisks: readonly string[];
   /** Null only while the service runs against a pre-schema-v3 dataset. */
   readonly properShippingName: string | null;
+}
+
+/** Prefix the converter uses for source content it could not resolve mechanically. */
+const UNRESOLVED_TOKEN_PREFIX = 'UNRESOLVED_';
+
+/**
+ * Public stand-in for a subsidiary hazard the converter could not resolve.
+ *
+ * The stored token carries the unresolved source value inline
+ * (`UNRESOLVED_SOURCE:<raw cell text>`), so passing `subsidiaryRisks` through
+ * verbatim published authorized workbook text through the batch API — the
+ * mobile client renders this list directly. The fact that an unresolved
+ * subsidiary hazard exists is preserved, because it is why the pair fails
+ * closed to REVIEW_REQUIRED; only the source payload is withheld.
+ */
+export const UNSPECIFIED_SUBSIDIARY_HAZARD = 'UNSPECIFIED_SUBSIDIARY_HAZARD';
+
+function redactSubsidiaryRisks(risks: readonly string[]): string[] {
+  const redacted: string[] = [];
+  for (const risk of risks) {
+    const value = risk.startsWith(UNRESOLVED_TOKEN_PREFIX) ? UNSPECIFIED_SUBSIDIARY_HAZARD : risk;
+    // Two variants whose only difference was the withheld payload would
+    // otherwise present as distinct profiles a client cannot tell apart.
+    if (!redacted.includes(value)) {
+      redacted.push(value);
+    }
+  }
+  return redacted;
 }
 
 /**
@@ -59,7 +92,7 @@ export function buildDgSummary(unNumber: string, entries: readonly DgEntry[]): D
   const uniqueProfiles = new Map<string, DgSummaryProfile>();
 
   for (const entry of entries) {
-    const subsidiaryRisks = [...entry.subsidiaryRisks];
+    const subsidiaryRisks = redactSubsidiaryRisks(entry.subsidiaryRisks);
     const profile: DgSummaryProfile = {
       primaryClass: entry.primaryClass,
       subsidiaryRisks,

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { aggregatePairEvaluations } from '../../src/domain/aggregate-decision';
+import { REVIEW_REQUIRED_REASON } from '../../src/domain/segregation';
 import type { PairEvaluation } from '../../src/domain/segregation';
 import type { AdditionalRequirement } from '../../src/domain/sg-rules';
 
@@ -98,15 +99,19 @@ describe('aggregatePairEvaluations', () => {
     expect(result.decision.level).toBeNull();
   });
 
-  it('reports the union of blockers across every reviewing variant pair', () => {
+  it('reports a generic reason that names no blocker, whatever the reviewing pairs carried', () => {
+    // Blockers can embed private source content (an unknown SG code read from
+    // the workbook, an unresolved source cell), so the aggregate reason must
+    // not be assembled from them — see REVIEW_REQUIRED_REASON.
     const result = aggregatePairEvaluations([
       review(['MULTIPLE_SUBSIDIARY_RISKS']),
-      review(['CLASS1_TO_CLASS1_UNRESOLVED', 'MULTIPLE_SUBSIDIARY_RISKS']),
+      review(['UNKNOWN_SG_CODE:UNRESOLVED_SOURCE:synthetic private wording', 'MULTIPLE_SUBSIDIARY_RISKS']),
     ]);
 
-    expect(result.decision.reason).toBe(
-      'Manual review required: CLASS1_TO_CLASS1_UNRESOLVED, MULTIPLE_SUBSIDIARY_RISKS.',
-    );
+    expect(result.decision.reason).toBe(REVIEW_REQUIRED_REASON);
+    expect(result.decision.reason).not.toContain('UNRESOLVED_SOURCE');
+    expect(result.decision.reason).not.toContain('synthetic private wording');
+    expect(result.decision.reason).not.toContain('MULTIPLE_SUBSIDIARY_RISKS');
   });
 
   it('marks review as uniform when every variant pair reviews for the same reason', () => {

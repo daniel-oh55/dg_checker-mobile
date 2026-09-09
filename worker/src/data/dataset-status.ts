@@ -14,6 +14,20 @@ const SCHEMA_VERSION_V2 = '2';
 const SCHEMA_VERSION_V3 = '3';
 
 /**
+ * The whitespace characters a v3 proper shipping name may consist entirely of
+ * and still be unusable: space, tab, LF, CR, vertical tab, form feed and NBSP.
+ *
+ * SQLite's one-argument TRIM() strips only ordinary spaces, so
+ * `TRIM(name) = ''` accepted a name of `"\t\n"` as a real name and let an
+ * unusable v3 dataset report ready. TRIM(X, Y) strips every character in Y
+ * instead, which is what makes this fail closed. NBSP (U+00A0) is included
+ * because the converter's own normalization treats it as whitespace, so a
+ * name consisting only of it can never be a name.
+ */
+const BLANK_PSN_CHARACTERS_SQL =
+  'char(32) || char(9) || char(10) || char(13) || char(11) || char(12) || char(160)';
+
+/**
  * Reports whether the service currently has a usable segregation dataset.
  * Distinguishes "dataset not imported yet" (ready: false) from a genuinely
  * missing UN number in an otherwise-ready dataset, which callers must
@@ -35,7 +49,8 @@ const SCHEMA_VERSION_V3 = '3';
  *   v2 import reports not-ready instead of quietly serving an engine with no
  *   special provisions.
  * - v3 is v2 plus a proper shipping name on every DG entry. A row with a NULL
- *   or blank name is only possible in a v3 dataset if the import was
+ *   name, or one that is whitespace-only in any of the forms real source and
+ *   runtime data produce, is only possible in a v3 dataset if the import was
  *   incomplete or the metadata was mislabelled, so it fails readiness rather
  *   than serving summaries with silently missing names. The same NULL is
  *   perfectly valid — and stays serviceable — under v1/v2, where the column
@@ -53,9 +68,13 @@ export async function getDatasetStatus(db: D1Database): Promise<DatasetStatus> {
     db.prepare('SELECT 1 FROM sg_rules LIMIT 1'),
     // Bounded by LIMIT 1: this stops at the first offending row rather than
     // scanning the whole table, and on a complete v3 dataset it is a single
-    // full scan of a few thousand rows on an already-hot table.
+    // full scan of a few thousand rows on an already-hot table. The names
+    // themselves are never loaded into the Worker.
     db.prepare(
-      `SELECT 1 FROM dg_entries WHERE proper_shipping_name IS NULL OR TRIM(proper_shipping_name) = '' LIMIT 1`,
+      `SELECT 1 FROM dg_entries
+        WHERE proper_shipping_name IS NULL
+           OR TRIM(proper_shipping_name, ${BLANK_PSN_CHARACTERS_SQL}) = ''
+        LIMIT 1`,
     ),
   ]);
 

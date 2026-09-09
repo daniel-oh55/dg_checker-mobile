@@ -195,6 +195,52 @@ describe('getDatasetStatus — schema v3', () => {
     expect(status.ready).toBe(false);
   });
 
+  // SQLite's one-argument TRIM() strips ordinary spaces only, so a name made
+  // of tabs, newlines or NBSP passed v3 readiness and would have been served
+  // as a real proper shipping name. Every whitespace form the source and the
+  // runtime can produce must fail closed instead.
+  //
+  // Built from explicit code points rather than backslash escapes so each
+  // character is named and cannot be misread at a glance.
+  const SPACE = String.fromCharCode(32);
+  const TAB = String.fromCharCode(9);
+  const LF = String.fromCharCode(10);
+  const CR = String.fromCharCode(13);
+  const VERTICAL_TAB = String.fromCharCode(11);
+  const FORM_FEED = String.fromCharCode(12);
+  const NBSP = String.fromCharCode(160);
+
+  const BLANK_NAMES: Array<[string, string]> = [
+    ['a tab and a line feed', TAB + LF],
+    ['a single tab', TAB],
+    ['a line feed', LF],
+    ['a carriage return', CR],
+    ['a CRLF pair', CR + LF],
+    ['mixed CR/LF and spaces', SPACE + CR + LF + SPACE + CR + LF + SPACE],
+    ['a vertical tab', VERTICAL_TAB],
+    ['a form feed', FORM_FEED],
+    ['a non-breaking space', NBSP],
+    ['non-breaking spaces and a tab', NBSP + NBSP + TAB],
+    ['every recognized blank character', SPACE + TAB + LF + CR + VERTICAL_TAB + FORM_FEED + NBSP],
+  ];
+
+  it.each(BLANK_NAMES)('is not ready when a v3 proper shipping name is only %s', async (_label, name) => {
+    await seedV3Dataset(name);
+
+    const status = await getDatasetStatus(env.DB);
+    expect(status.ready).toBe(false);
+    expect(status.schemaVersion).toBe('3');
+  });
+
+  it('stays ready for a real name that merely contains internal whitespace', async () => {
+    // The blank check must not reject a legitimate multi-word name, or one
+    // whose stored form kept whitespace around real text.
+    await seedV3Dataset(`${SPACE}${SPACE}SYNTHETIC V3${TAB}SUBSTANCE,${NBSP}WITH QUALIFIER${SPACE}`);
+
+    const status = await getDatasetStatus(env.DB);
+    expect(status).toEqual({ ready: true, schemaVersion: '3', datasetVersion: 'synthetic-v3' });
+  });
+
   it('still requires sg_rules for v3, exactly as v2 does', async () => {
     await seedV3Dataset('SYNTHETIC V3 SUBSTANCE');
     await env.DB.prepare('DELETE FROM sg_rules').run();

@@ -1,5 +1,6 @@
 import { env, exports } from 'cloudflare:workers';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { REVIEW_REQUIRED_REASON } from '../src/domain/segregation';
 import { markSyntheticDatasetReady, seedClassRule, seedDgEntry, seedSgRule } from './helpers/seed';
 
 // End-to-end coverage for the SG-rule and additive-response parts of the
@@ -279,7 +280,9 @@ describe('POST /segregation/check — SG rules and additive response fields', ()
     const body = await check(left, right);
 
     expect(body.decision.status).toBe('REVIEW_REQUIRED');
-    expect(body.decision.reason).toContain(`REVIEW_ONLY_SG_CODE:${code}`);
+    // The blocker stays internal; the public reason names no source-derived code.
+    expect(body.decision.reason).toBe(REVIEW_REQUIRED_REASON);
+    expect(body.decision.reason).not.toContain(code);
   });
 
   it('requires review when an entry references a RESERVED SG code', async () => {
@@ -301,7 +304,8 @@ describe('POST /segregation/check — SG rules and additive response fields', ()
     const body = await check(left, right);
 
     expect(body.decision.status).toBe('REVIEW_REQUIRED');
-    expect(body.decision.reason).toContain(`RESERVED_SG_CODE:${code}`);
+    expect(body.decision.reason).toBe(REVIEW_REQUIRED_REASON);
+    expect(body.decision.reason).not.toContain(code);
   });
 
   it('requires review for an SG code with no row in sg_rules', async () => {
@@ -322,7 +326,8 @@ describe('POST /segregation/check — SG rules and additive response fields', ()
     const body = await check(left, right);
 
     expect(body.decision.status).toBe('REVIEW_REQUIRED');
-    expect(body.decision.reason).toContain(`UNKNOWN_SG_CODE:${code}`);
+    expect(body.decision.reason).toBe(REVIEW_REQUIRED_REASON);
+    expect(body.decision.reason).not.toContain(code);
   });
 
   it('requires review for an unresolved subsidiary source token', async () => {
@@ -342,7 +347,8 @@ describe('POST /segregation/check — SG rules and additive response fields', ()
     const body = await check(left, right);
 
     expect(body.decision.status).toBe('REVIEW_REQUIRED');
-    expect(body.decision.reason).toContain('UNRESOLVED_SUBSIDIARY_SOURCE');
+    expect(body.decision.reason).toBe(REVIEW_REQUIRED_REASON);
+    expect(body.decision.reason).not.toContain('UNRESOLVED');
   });
 
   it('returns 500 rather than a permissive result when an sg_rules row is malformed', async () => {

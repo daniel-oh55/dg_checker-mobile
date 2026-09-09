@@ -11,8 +11,14 @@
 //     ADDITIONAL_REQUIREMENT, a REVIEW_ONLY, a RESERVED, or a hard failure;
 //   - every non-empty subsidiary-hazard cell becomes resolved hazard classes
 //     or an explicit UNRESOLVED_* token;
+//   - every non-blank DGL row becomes a DG entry or a hard conversion
+//     failure — a malformed non-empty UN value is never counted and skipped;
+//   - a merged continuation row is folded into its master logical entry (its
+//     PSN fragment appended in source row order), and any independent
+//     regulatory value on such a row hard-fails rather than being attributed
+//     or discarded;
 //   - every emitted DG row carries the proper shipping name from its own
-//     source row, or the whole conversion fails.
+//     logical source row, or the whole conversion fails.
 //
 // Unknown data never becomes CLEAR by omission. This module never invents
 // regulatory meaning for ambiguous source content.
@@ -137,6 +143,26 @@ export function normalizePsnCell(rawValue) {
 /** True for a merged cell that is a continuation of another (master) cell — i.e. it carries no independent value. */
 export function isContinuationRow(unCell) {
   return Boolean(unCell && unCell.isMerged && unCell.master && unCell.master !== unCell);
+}
+
+/**
+ * True when a cell carries no independent value of its own: it is absent, it
+ * is a merged continuation of a master cell elsewhere, or its text is empty
+ * once whitespace is removed.
+ *
+ * Used to decide whether a merged continuation row is pure presentation
+ * continuation. Anything this returns false for is a value the source wrote
+ * independently on that row, which the converter must never silently absorb
+ * into the master logical entry.
+ */
+export function hasNoIndependentValue(cell) {
+  if (!cell) return true;
+  if (isContinuationRow(cell)) return true;
+
+  const { kind, text } = extractCellText(cell.value);
+  if (kind === 'empty') return true;
+  if (kind === 'string') return text.replace(/\s/gu, '').length === 0;
+  return false;
 }
 
 /**
@@ -655,15 +681,35 @@ function buildHeaderIndex(headerRow, columnCount) {
 
 /**
  * Reads the DGL "TRIM" sheet and produces canonical DgEntry rows plus a
- * counts summary. Skips merged continuation rows (wrapped PSN text with no
- * independent UN/class/etc. identity) and rejects UN numbers that cannot
- * unambiguously normalize to 4 digits.
+ * counts summary.
+ *
+ * A source row whose "UN No." cell is a merged continuation is not a new DG
+ * record — it is the tail of the logical entry started by the master row
+ * above it, which the source wraps across several sheet rows. Such a row is
+ * therefore folded into that master entry rather than skipped:
+ *
+ *   - a non-empty "Proper shipping name (PSN)" fragment is appended to the
+ *     master entry's name, in source row order, under the same whitespace
+ *     normalization every PSN gets, so the final name stays one stable
+ *     normalized string with no qualifier wording dropped;
+ *   - a fully blank continuation row contributes nothing and is harmless;
+ *   - an *independent* value in a regulatory input column this application
+ *     reads (class or division, subsidiary hazard(s), segregation) cannot be
+ *     attributed to the master entry as presentation continuation, so it
+ *     hard-fails the conversion. The converter never guesses whether such a
+ *     value qualifies the master entry or describes a second one.
+ *
+ * A master row whose UN number cannot unambiguously normalize to 4 digits
+ * also hard-fails: a non-empty source UN value must never disappear from the
+ * dataset by being counted and skipped. Only a row that is blank in the UN
+ * column *and* in every other column the converter reads is skipped, which
+ * is what a trailing spacer row looks like.
  *
  * Every emitted entry carries the proper shipping name read from its own
- * source row — the same row that produced the UN number, class, subsidiary
- * hazards and segregation field, so PSN can never drift out of alignment
- * with the regulatory columns. An emitted row whose PSN cell yields no
- * usable text fails the whole conversion: schema v3 requires a real name for
+ * logical source row — the same row that produced the UN number, class,
+ * subsidiary hazards and segregation field, so PSN can never drift out of
+ * alignment with the regulatory columns. A logical entry with no usable
+ * final PSN fails the whole conversion: schema v3 requires a real name for
  * every entry, and this converter never substitutes a placeholder.
  */
 export function convertDglSheet(worksheet) {
@@ -683,13 +729,28 @@ export function convertDglSheet(worksheet) {
   const segregationColumn = headerIndex.get('Segregation');
   const psnColumn = headerIndex.get('Proper shipping name (PSN)');
 
+  /** Regulatory input columns this application reads, by source header name. */
+  const regulatoryColumns = [
+    ['Class or division', classColumn],
+    ['Subsidiary hazard(s)', subsidiaryColumn],
+    ['Segregation', segregationColumn],
+  ];
+
   const nextVariantKey = createVariantKeyAssigner();
   const dgEntries = [];
+  /** Per-entry PSN fragments in source row order: the master's own, then any continuation fragments. */
+  const psnPartsByEntry = [];
+  /** How many of those parts came from a continuation row, per entry. */
+  const continuationFragmentCounts = [];
+  const entryRowNumbers = [];
   const missingPsnRowNumbers = [];
   const counts = {
     sourceRows: 0,
-    continuationRowsSkipped: 0,
-    rejectedRows: 0,
+    continuationRows: 0,
+    continuationPsnFragments: 0,
+    continuationBlankRows: 0,
+    entriesWithContinuationPsn: 0,
+    blankRowsSkipped: 0,
     canonicalUn: 0,
     whitespaceCorrectedUn: 0,
     numericUn: 0,
@@ -711,7 +772,49 @@ export function convertDglSheet(worksheet) {
     const unCell = row.getCell(unColumn);
 
     if (isContinuationRow(unCell)) {
-      counts.continuationRowsSkipped++;
+      counts.continuationRows++;
+
+      // Fail closed before reading anything: a continuation row that carries
+      // its own regulatory value is not presentation continuation, and this
+      // converter must not decide whether it qualifies the master entry or
+      // introduces a second one.
+      const independentColumns = regulatoryColumns
+        .filter(([, column]) => !hasNoIndependentValue(row.getCell(column)))
+        .map(([name]) => name);
+      if (independentColumns.length > 0) {
+        throw new Error(
+          `DGL sheet row ${rowNumber} is a merged continuation row but carries an independent value in ` +
+            `regulatory column(s): ${independentColumns.join(', ')}. A continuation row may only carry ` +
+            'presentation continuation of the master entry; re-verify the authorized source rather than ' +
+            'attributing or discarding this value.',
+        );
+      }
+
+      const psnCell = row.getCell(psnColumn);
+      if (hasNoIndependentValue(psnCell)) {
+        counts.continuationBlankRows++;
+        continue;
+      }
+
+      const fragment = normalizePsnCell(psnCell.value);
+      if (fragment === null) {
+        // Non-blank but not usable text (a number, a date, an unrecognized
+        // object) — an unrecognized continuation shape, never silently dropped.
+        throw new Error(
+          `DGL sheet row ${rowNumber} is a merged continuation row whose "Proper shipping name (PSN)" cell ` +
+            'is non-empty but holds no usable text. Re-verify the authorized source.',
+        );
+      }
+      if (psnPartsByEntry.length === 0) {
+        throw new Error(
+          `DGL sheet row ${rowNumber} is a merged continuation row carrying a proper-shipping-name fragment ` +
+            'with no preceding master DG row to attach it to.',
+        );
+      }
+
+      psnPartsByEntry[psnPartsByEntry.length - 1].push(fragment);
+      continuationFragmentCounts[continuationFragmentCounts.length - 1]++;
+      counts.continuationPsnFragments++;
       continue;
     }
 
@@ -719,8 +822,19 @@ export function convertDglSheet(worksheet) {
 
     const un = normalizeUnNumberCell(unCell.value);
     if (un.status === 'rejected') {
-      counts.rejectedRows++;
-      continue;
+      // A row that is blank everywhere the converter reads is a spacer and may
+      // be skipped. Anything else — a malformed non-empty UN value, or a blank
+      // UN alongside real PSN/regulatory content — is a source row that would
+      // otherwise vanish from the dataset, so it hard-fails instead.
+      const readColumns = [unColumn, psnColumn, classColumn, subsidiaryColumn, segregationColumn];
+      if (readColumns.every((column) => hasNoIndependentValue(row.getCell(column)))) {
+        counts.blankRowsSkipped++;
+        continue;
+      }
+      throw new Error(
+        `DGL sheet row ${rowNumber} has no usable "UN No." value but is not blank. Every non-blank source ` +
+          'row must produce a DG entry; re-verify the authorized source rather than dropping the row.',
+      );
     }
     if (un.status === 'whitespace-corrected') counts.whitespaceCorrectedUn++;
     else if (un.status === 'numeric') counts.numericUn++;
@@ -742,33 +856,51 @@ export function convertDglSheet(worksheet) {
     if (segregationGroups.length > 0) counts.sggGroupEntries++;
 
     const rawPsn = row.getCell(psnColumn).value;
-    const properShippingName = normalizePsnCell(rawPsn);
+    const masterPsn = normalizePsnCell(rawPsn);
     // Compared against the unwrapped source text, not the raw cell object, so
     // the count means "normalization changed the name" for a rich-text or
     // hyperlink cell too — not just for a plain string.
     const rawPsnText = extractCellText(rawPsn).text;
-    if (properShippingName === null) {
-      // Recorded, not thrown on immediately: a human re-verifying the source
-      // needs to know how many rows are affected, not just the first one.
-      counts.psnMissingEntries++;
-      missingPsnRowNumbers.push(rowNumber);
-    } else {
-      counts.psnPopulatedEntries++;
-      if (rawPsnText !== properShippingName) {
-        counts.psnWhitespaceNormalizedEntries++;
-      }
+    if (masterPsn !== null && rawPsnText !== masterPsn) {
+      counts.psnWhitespaceNormalizedEntries++;
     }
 
     dgEntries.push({
       unNumber: un.value,
       variantKey: nextVariantKey(un.value),
-      properShippingName,
+      // Finalized after the sheet is read, once any continuation fragments
+      // belonging to this logical entry have been collected.
+      properShippingName: null,
       primaryClass,
       subsidiaryRisks,
       segregationGroups,
       segregationCodes,
       compatibilityGroup,
     });
+    psnPartsByEntry.push(masterPsn === null ? [] : [masterPsn]);
+    continuationFragmentCounts.push(0);
+    entryRowNumbers.push(rowNumber);
+  }
+
+  // Each logical entry's name is the master cell's text followed by its
+  // continuation fragments in source row order. Every part is already
+  // whitespace-normalized, so joining them with a single space yields exactly
+  // the same stable single-line string the existing normalization produces for
+  // a name the source happened to wrap inside one cell. No wording is
+  // translated, re-cased, re-punctuated or dropped.
+  for (let index = 0; index < dgEntries.length; index++) {
+    const parts = psnPartsByEntry[index];
+    if (continuationFragmentCounts[index] > 0) counts.entriesWithContinuationPsn++;
+
+    if (parts.length === 0) {
+      // Recorded, not thrown on immediately: a human re-verifying the source
+      // needs to know how many rows are affected, not just the first one.
+      counts.psnMissingEntries++;
+      missingPsnRowNumbers.push(entryRowNumbers[index]);
+      continue;
+    }
+    counts.psnPopulatedEntries++;
+    dgEntries[index].properShippingName = parts.join(' ');
   }
 
   if (missingPsnRowNumbers.length > 0) {
@@ -901,8 +1033,11 @@ async function main() {
   console.log(`Dataset version: ${validated.datasetVersion}`);
   console.log(`Schema version: ${validated.schemaVersion}`);
   console.log(`Source DG rows: ${dglCounts.sourceRows}`);
-  console.log(`Continuation rows skipped: ${dglCounts.continuationRowsSkipped}`);
-  console.log(`Rejected/unresolved UN rows: ${dglCounts.rejectedRows}`);
+  console.log(`Merged continuation rows: ${dglCounts.continuationRows}`);
+  console.log(`  carrying a PSN fragment: ${dglCounts.continuationPsnFragments}`);
+  console.log(`  fully blank: ${dglCounts.continuationBlankRows}`);
+  console.log(`Entries whose PSN was reassembled from continuation rows: ${dglCounts.entriesWithContinuationPsn}`);
+  console.log(`Fully blank rows skipped: ${dglCounts.blankRowsSkipped}`);
   console.log(`Canonical DG entries: ${validated.dgEntries.length}`);
   console.log(`Unique UN numbers: ${uniqueUnNumbers.size}`);
   console.log(`Multi-variant UN numbers: ${multiVariantUnNumberCount}`);

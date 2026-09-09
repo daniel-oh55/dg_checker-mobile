@@ -288,9 +288,23 @@ export function dedupeAdditionalRequirements(
   return [...byCode.values()].sort((a, b) => (a.code < b.code ? -1 : a.code > b.code ? 1 : 0));
 }
 
-export function reviewReason(blockers: readonly string[]): string {
-  return `Manual review required: ${[...blockers].sort().join(', ')}.`;
-}
+/**
+ * The public reason for every REVIEW_REQUIRED decision.
+ *
+ * Deliberately stable and generic. Review blockers are diagnostic values
+ * derived from the private authorized source — `UNKNOWN_SG_CODE:<code>` and
+ * `MISSING_CLASS_RULE:<a>|<b>` embed a code or class label read straight out
+ * of the workbook, and a source cell the converter could not resolve reaches
+ * them verbatim as an `UNRESOLVED_SOURCE:` payload. Concatenating blockers
+ * into `decision.reason` published that source text through the API, so the
+ * public reason now carries none of it.
+ *
+ * Blockers stay available internally on `PairEvaluation.reviewBlockers` for
+ * evaluation, logging and debugging; they are not part of the single or batch
+ * API contract and must not be added to it.
+ */
+export const REVIEW_REQUIRED_REASON =
+  'Manual review required due to unresolved or unsupported segregation conditions.';
 
 /**
  * Pure segregation evaluation for one concrete DG entry variant pair. Does
@@ -385,7 +399,7 @@ export function evaluateSegregationPair(
   if (acc.blockers.length > 0) {
     const blockers = [...acc.blockers].sort();
     return {
-      decision: { status: 'REVIEW_REQUIRED', level: null, reason: reviewReason(blockers) },
+      decision: { status: 'REVIEW_REQUIRED', level: null, reason: REVIEW_REQUIRED_REASON },
       additionalRequirements,
       reviewBlockers: blockers,
     };

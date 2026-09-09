@@ -28,9 +28,17 @@ converter normalizes it only as far as a stable single-line API value
 requires — the ExcelJS rich-text/hyperlink wrapper is unwrapped and runs of
 whitespace (newlines and NBSP included) collapse to single spaces. Wording is
 otherwise untouched: nothing is translated, re-cased, expanded, re-punctuated
-or dropped, and `N.O.S.` and every other qualifier survives verbatim. A source
-row with no usable name fails the whole conversion rather than importing a
-placeholder.
+or dropped, and `N.O.S.` and every other qualifier survives verbatim. A
+logical entry with no usable name fails the whole conversion rather than
+importing a placeholder.
+
+Some logical DGL entries are wrapped across several sheet rows by merging the
+UN cell. Those **continuation rows are part of the entry above them**, so
+their name fragments are appended in source row order and normalized into the
+one string — see
+[Converter fail-closed invariant](#converter-fail-closed-invariant). Reading
+only the master row would have silently truncated those names at the wrap
+point.
 
 `properShippingName` is **display/reference data only**. The segregation
 engine never reads it, and no decision may depend on it — see
@@ -205,6 +213,33 @@ policy, not gaps to be papered over: the authorized dataset does not carry the
 dangerous-reaction detail needed to finalize them, and this PR does not build a
 multiple-subsidiary exception engine.
 
+### Blockers are internal
+
+Those blockers are **diagnostic values, not an API field**. Several embed
+content read straight out of the private source — the `<code>` in
+`UNKNOWN_SG_CODE`, the class labels in `MISSING_CLASS_RULE`, and an
+unresolvable source cell, which reaches the code position verbatim as an
+`UNRESOLVED_SOURCE:<raw text>` payload.
+
+So `decision.reason` is **not** assembled from them. Every `REVIEW_REQUIRED`
+decision — single endpoint and batch, per-pair and aggregated — carries one
+stable generic sentence:
+
+```
+Manual review required due to unresolved or unsupported segregation conditions.
+```
+
+A per-cause reason would itself be a side channel, telling a caller which
+private source condition fired. The blockers stay on
+`PairEvaluation.reviewBlockers` for evaluation, logging and debugging, and are
+not part of the single or batch response contract.
+
+For the same reason, `dgSummaries[].profiles[].subsidiaryRisks` reports an
+unresolvable subsidiary value as `UNSPECIFIED_SUBSIDIARY_HAZARD` rather than
+as its `UNRESOLVED_*` token: the hazard's *existence* is why the pair fails
+closed and must stay visible, but its source payload is withheld. Withholding
+detail never softens a decision — the status and level are unchanged.
+
 ## Converter fail-closed invariant
 
 No authorized source row may silently disappear because the converter does not
@@ -220,8 +255,34 @@ understand it.
 - **Subsidiary column** — every non-empty value becomes resolved hazard
   classes or an explicit `UNRESOLVED_*` token, which the engine routes to
   review rather than dropping.
+- **UN No. column** — every non-blank row becomes a DG entry or a hard
+  failure. A malformed non-empty UN value is never counted and skipped; only a
+  row blank in the UN column *and* every other column the converter reads
+  (a trailing spacer) is skipped.
+- **Merged continuation rows** — the source wraps some logical DGL entries
+  across several sheet rows by merging the UN cell. Such a row is *not* a new
+  entry and is *not* discarded: its proper-shipping-name fragment is appended
+  to the master entry's name in source row order, under the same whitespace
+  normalization, so the final name is one stable single-line string with no
+  qualifier wording lost. A fully blank continuation row contributes nothing.
+  An **independent** value in a regulatory input column (class or division,
+  subsidiary hazard(s), segregation) on a continuation row hard-fails: it
+  cannot be attributed to the master entry as presentation continuation, and
+  the converter never guesses whether it qualifies that entry or describes a
+  second one.
 
 Unknown data never becomes CLEAR by omission.
+
+### SG class targets must exist in the matrix
+
+Every `DIRECT_CLASS` and `AS_FOR_CLASS` target must name a class label present
+in the same dataset's validated `classRules`. This is membership, not syntax:
+a class-shaped label with no matrix row fails *open* at runtime — it matches
+nothing, so the level it was meant to impose silently disappears. The allowed
+set is derived from the dataset's own `classRules`, never a hard-coded list,
+so it stays correct across source revisions. Note the matrix publishes the
+*collapsed* Class 1 rows, so a bare division such as `1.1` is correctly
+rejected as a target.
 
 ## API
 
@@ -388,9 +449,13 @@ indefinitely:
 - **v3** is v2 plus a proper shipping name on every DG entry. A NULL or blank
   name is only possible in a v3 dataset if the import was incomplete or the
   metadata was mislabelled, so it fails readiness rather than serving
-  summaries with silently missing names. The same NULL is perfectly valid —
-  and stays serviceable — under v1/v2, where the column simply predates the
-  dataset.
+  summaries with silently missing names. "Blank" means blank in every
+  whitespace form the source and runtime produce — space, tab, LF, CR,
+  vertical tab, form feed and NBSP — because SQLite's one-argument `TRIM()`
+  strips only ordinary spaces, so a name of `"<tab><newline>"` would otherwise
+  have passed. The check stays bounded by `LIMIT 1` and never loads the names
+  into the Worker. The same NULL is perfectly valid — and stays serviceable —
+  under v1/v2, where the column simply predates the dataset.
 
 **Production is still on the older dataset**, and schema v3 is the eventual
 activation dataset. Production may jump straight from its current dataset to
@@ -410,6 +475,16 @@ Safe activation order:
 4. only after that compatible mobile client is available, import the schema
    v3 dataset — readiness flips to v3 only after the final `dataset_version`
    write, once every row is in place
+
+On the ordering inside the generated import: Cloudflare's remote
+`d1 execute --file` bulk import rolls the whole operation back on failure and
+blocks database requests while it runs, so a failed remote bulk import does
+not leave partially committed statements behind. The generated SQL still
+deletes the two readiness metadata keys *before* replacing any table, and
+rewrites them only at the end. That is defense-in-depth for the paths with no
+such guarantee — statements run manually or one at a time, and a
+syntactically valid but truncated artifact — and for any future execution path
+without the same bulk-import atomicity.
 
 Steps 1 and 2 may safely be completed beforehand, independently of the
 client. **Schema-v3 dataset activation/import (step 4) must never precede the
