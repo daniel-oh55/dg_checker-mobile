@@ -11,6 +11,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   checkSegregationBatch,
   SegregationCheckError,
@@ -32,6 +33,15 @@ import {
 const MAX_SLOTS = 10;
 
 export default function App() {
+  return (
+    <SafeAreaProvider>
+      <AppContent />
+    </SafeAreaProvider>
+  );
+}
+
+function AppContent() {
+  const insets = useSafeAreaInsets();
   const [inputCount, setInputCount] = useState(2);
   const [unInputs, setUnInputs] = useState<string[]>(Array(MAX_SLOTS).fill(''));
   const [loading, setLoading] = useState(false);
@@ -110,7 +120,10 @@ export default function App() {
 
   return (
     <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        contentContainerStyle={[styles.container, { paddingBottom: 32 + insets.bottom }]}
+        keyboardShouldPersistTaps="handled"
+      >
         <Text style={styles.title}>{appHeaderText.title}</Text>
         <Text style={styles.subtitleKo}>{appHeaderText.primary.ko}</Text>
         <Text style={styles.subtitleEn}>{appHeaderText.primary.en}</Text>
@@ -200,7 +213,6 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     padding: 20,
     paddingTop: 56,
-    paddingBottom: 48,
   },
   title: {
     fontSize: 22,
