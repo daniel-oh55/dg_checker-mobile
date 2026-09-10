@@ -142,8 +142,16 @@ eas build --platform android --profile preview
 ```
 
 This profile always uses Google test ads (regardless of what's configured in
-the `preview` EAS environment) and the production DG API. Record here once
-run: EAS build ID, APK link, app version, versionCode.
+the `preview` EAS environment) and the production DG API.
+
+**Last successful preview build:**
+
+- EAS build ID: `97826bca-99ca-4b06-b726-288b9b7e76ab`
+- Commit: `e71608d9e6f7ebed6b9af38936b5cf90edb73097`
+- APK: <https://expo.dev/artifacts/eas/nsm2TX1g-gxLuB_7ugPdQIyRztkNWVKRzAJ53JY9sOU.apk>
+- App version: `1.0.0`, versionCode: `1`
+- Physical-device QA against this APK is still outstanding — see the
+  checklist above.
 
 ## Production build
 
