@@ -53,13 +53,6 @@ export function PairResultCard({ pair }: PairResultCardProps) {
         <View style={styles.additionalBlock}>
           <Text style={styles.additionalHeaderKo}>{additionalRequirementText.header.ko}</Text>
           <Text style={styles.additionalHeaderEn}>{additionalRequirementText.header.en}</Text>
-          <View style={styles.additionalCodes}>
-            {pair.additionalRequirements.map((requirement) => (
-              <View key={requirement.code} style={styles.additionalCodeChip}>
-                <Text style={styles.additionalCodeText}>{requirement.code}</Text>
-              </View>
-            ))}
-          </View>
           <Text style={styles.additionalFooter}>
             {additionalRequirementText.footer.ko} / {additionalRequirementText.footer.en}
           </Text>
@@ -135,25 +128,6 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: palette.additionalText,
     marginBottom: 6,
-  },
-  additionalCodes: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginBottom: 6,
-  },
-  additionalCodeChip: {
-    borderWidth: 1,
-    borderColor: palette.additionalBorder,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    backgroundColor: '#FFFFFF',
-  },
-  additionalCodeText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: palette.additionalText,
   },
   additionalFooter: {
     fontSize: 11,

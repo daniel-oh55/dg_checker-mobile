@@ -1,6 +1,12 @@
 import { StyleSheet, Text, View } from 'react-native';
 import type { DgSummary, DgSummaryProfile } from '../api/segregation';
-import { multipleProfilesText, noneText, palette, psnUnavailableText } from '../ui/segregation-presentation';
+import {
+  multipleProfilesText,
+  palette,
+  presentPrimaryClass,
+  presentSubsidiaryRisks,
+  psnUnavailableText,
+} from '../ui/segregation-presentation';
 
 interface DgSummaryCardProps {
   summary: DgSummary;
@@ -55,13 +61,11 @@ function ProfileFields({ profile }: { profile: DgSummaryProfile }) {
 
       <View style={styles.attributeRow}>
         <Text style={styles.attributeLabel}>Class</Text>
-        <Text style={styles.attributeValue}>{profile.primaryClass}</Text>
+        <Text style={styles.attributeValue}>{presentPrimaryClass(profile.primaryClass)}</Text>
       </View>
       <View style={styles.attributeRow}>
         <Text style={styles.attributeLabel}>Sub Risk</Text>
-        <Text style={styles.attributeValue}>
-          {profile.subsidiaryRisks.length > 0 ? profile.subsidiaryRisks.join(', ') : `${noneText.ko} / ${noneText.en}`}
-        </Text>
+        <Text style={styles.attributeValue}>{presentSubsidiaryRisks(profile.subsidiaryRisks)}</Text>
       </View>
     </View>
   );
