@@ -103,7 +103,10 @@ export function pairStatusText(status: DecisionStatus, level: number | null): Bi
         en: 'Segregation required',
       };
     case 'CLEAR':
-      return { ko: '격리 수준 없음 · Level 0', en: 'No segregation level' };
+      return {
+        ko: '확인된 규칙 기준 격리요건 없음 · Level 0',
+        en: 'No segregation requirement identified from the evaluated rules · Level 0',
+      };
   }
 }
 
@@ -113,9 +116,42 @@ export const variantResolutionNote: Bilingual = {
 };
 
 export const additionalRequirementText = {
-  header: { ko: '추가 조건 확인 필요', en: 'Additional requirement' } satisfies Bilingual,
+  header: {
+    ko: '추가 격리조건 확인 필요',
+    en: 'Additional segregation requirement requires review',
+  } satisfies Bilingual,
   footer: { ko: '별도 조건을 확인해야 합니다.', en: 'Requires separate confirmation.' } satisfies Bilingual,
 };
+
+/**
+ * Public API sentinels for a stored hazard value outside the authorized
+ * publishable vocabulary (see worker `src/domain/dg-summary.ts`). Must never
+ * be shown to end users verbatim, and must never be softened into "none" or
+ * "safe" — the fact that the value is unresolved has to stay visible.
+ */
+const UNSPECIFIED_PRIMARY_HAZARD = 'UNSPECIFIED_PRIMARY_HAZARD';
+const UNSPECIFIED_SUBSIDIARY_HAZARD = 'UNSPECIFIED_SUBSIDIARY_HAZARD';
+
+export const hazardReviewRequiredText: Bilingual = { ko: '확인 필요', en: 'Review required' };
+
+/** Ordinary classes (e.g. "3", "6.1", "1.4") pass through unchanged. */
+export function presentPrimaryClass(primaryClass: string): string {
+  return primaryClass === UNSPECIFIED_PRIMARY_HAZARD
+    ? `${hazardReviewRequiredText.ko} / ${hazardReviewRequiredText.en}`
+    : primaryClass;
+}
+
+/** Resolved subsidiary risk tokens pass through unchanged; only the sentinel is remapped. */
+export function presentSubsidiaryRisks(subsidiaryRisks: readonly string[]): string {
+  if (subsidiaryRisks.length === 0) {
+    return `${noneText.ko} / ${noneText.en}`;
+  }
+  return subsidiaryRisks
+    .map((risk) =>
+      risk === UNSPECIFIED_SUBSIDIARY_HAZARD ? `${hazardReviewRequiredText.ko} / ${hazardReviewRequiredText.en}` : risk,
+    )
+    .join(', ');
+}
 
 export function summaryHeadline(summary: SegregationBatchSummary): Bilingual {
   if (summary.reviewRequiredPairs > 0) {

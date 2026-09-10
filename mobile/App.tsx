@@ -17,9 +17,13 @@ import {
   SegregationCheckError,
   type SegregationBatchResult,
 } from './src/api/segregation';
+import { resolvePrivacyPolicyUrl } from './src/ads/config';
+import { useAdsConsent } from './src/ads/useAdsConsent';
+import { AdBanner } from './src/components/AdBanner';
 import { BatchResultSummary } from './src/components/BatchResultSummary';
 import { DgSummaryCard } from './src/components/DgSummaryCard';
 import { PairResultCard } from './src/components/PairResultCard';
+import { PrivacyFooter } from './src/components/PrivacyFooter';
 import { UnInputGrid } from './src/components/UnInputGrid';
 import {
   appHeaderText,
@@ -29,6 +33,8 @@ import {
   palette,
   validateActiveInputs,
 } from './src/ui/segregation-presentation';
+
+const privacyPolicyUrl = resolvePrivacyPolicyUrl();
 
 const MAX_SLOTS = 10;
 
@@ -42,6 +48,7 @@ export default function App() {
 
 function AppContent() {
   const insets = useSafeAreaInsets();
+  const { canRequestAds, privacyOptionsRequired, showPrivacyOptions } = useAdsConsent();
   const [inputCount, setInputCount] = useState(2);
   const [unInputs, setUnInputs] = useState<string[]>(Array(MAX_SLOTS).fill(''));
   const [loading, setLoading] = useState(false);
@@ -121,7 +128,8 @@ function AppContent() {
   return (
     <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView
-        contentContainerStyle={[styles.container, { paddingBottom: 32 + insets.bottom }]}
+        style={styles.scroll}
+        contentContainerStyle={styles.container}
         keyboardShouldPersistTaps="handled"
       >
         <Text style={styles.title}>{appHeaderText.title}</Text>
@@ -198,8 +206,18 @@ function AppContent() {
           </>
         )}
 
+        <PrivacyFooter
+          privacyOptionsRequired={privacyOptionsRequired}
+          privacyPolicyUrl={privacyPolicyUrl}
+          onPrivacyOptionsPress={showPrivacyOptions}
+        />
+
         <StatusBar style="dark" />
       </ScrollView>
+
+      <View style={{ paddingBottom: insets.bottom }}>
+        <AdBanner canRequestAds={canRequestAds} />
+      </View>
     </KeyboardAvoidingView>
   );
 }
@@ -209,10 +227,14 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: palette.background,
   },
+  scroll: {
+    flex: 1,
+  },
   container: {
     flexGrow: 1,
     padding: 20,
     paddingTop: 56,
+    paddingBottom: 32,
   },
   title: {
     fontSize: 22,

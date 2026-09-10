@@ -80,11 +80,11 @@ See [docs/segregation-engine.md](docs/segregation-engine.md) for what the
 engine evaluates, the `REVIEW_REQUIRED` boundaries it deliberately keeps, the
 dataset schema v3 contract, and the production activation order.
 
-The schema v3 engine is **not deployed to production**: the current mobile
-client cannot surface `additionalRequirements`, and a client that ignores that
-field would present a level-0 result as unrestricted while an obligation is
-still outstanding. Production still runs the older dataset, and may activate
-schema v3 directly without activating schema v2 first.
+Schema v3 is **deployed to production**: the Worker and D1 database run
+`schemaVersion = "3"` on dataset `authorized-source-v3`, and the mobile client
+surfaces `additionalRequirements` (as a generic review notice, without
+exposing the underlying SG/SGG codes). The authorized/private IMDG source
+data itself is never committed to this public repository — see below.
 
 ## Check
 
