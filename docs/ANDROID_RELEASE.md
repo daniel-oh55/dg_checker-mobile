@@ -17,6 +17,36 @@ Test-vs-production selection is deterministic and build-time only (see
 automatically by EAS during a cloud build. A developer cannot accidentally
 produce a preview build wired to production ad units.
 
+## UMP consent gating (native app measurement + ProGuard)
+
+`mobile/app.config.ts` configures the `react-native-google-mobile-ads` plugin
+with `delayAppMeasurementInit: true`. This defers Google Mobile Ads' native
+app measurement until the app actually initializes Mobile Ads — which
+`mobile/src/ads/useAdsConsent.ts` only does once the UMP SDK reports
+`canRequestAds: true`. Without this flag, native measurement can start before
+consent has been gathered.
+
+The same config also applies the `expo-build-properties` plugin with
+`android.extraProguardRules` set to the ProGuard keep rule the UMP SDK
+requires:
+
+```
+-keep class com.google.android.gms.internal.consent_sdk.** { *; }
+```
+
+This is additive only — it does not enable R8/minification and does not touch
+`compileSdk`/`targetSdk`/Kotlin versions.
+
+`useAdsConsent` requests updated consent info on every launch and shows the
+consent form if required. If that gathering fails (e.g. no network), it falls
+back to the UMP SDK's previous-session state via `AdsConsent.getConsentInfo()`
+rather than assuming no consent was ever given; if even that call fails, it
+fails closed (`canRequestAds: false`). `PrivacyFooter`'s "Privacy choices"
+action no longer manages UMP state itself — it calls the hook's
+`showPrivacyOptions()`, which shows the privacy-options form and then
+re-reads `AdsConsent.getConsentInfo()` to refresh `canRequestAds` (gating the
+banner) and `privacyOptionsRequired`.
+
 ## `react-native-google-mobile-ads` is pinned to an exact version
 
 `mobile/package.json` pins `react-native-google-mobile-ads` to the exact
@@ -84,8 +114,8 @@ with each variable unset in turn.
 - [ ] Data Safety section must declare Google Mobile Ads SDK data handling
       (advertising ID, diagnostics, app interactions) per Google's current
       published data-disclosure documentation for that SDK — verify against
-      <https://support.google.com/admob/answer/6128543> at submission time
-      rather than assuming this list is exhaustive.
+      <https://developers.google.com/admob/android/privacy/play-data-disclosure>
+      at submission time rather than assuming this list is exhaustive.
 - [ ] Privacy Policy URL must be entered in Play Console **and** reachable
       from the app footer (`EXPO_PUBLIC_PRIVACY_POLICY_URL`).
 - [ ] Target audience / content rating questionnaire must be completed by the

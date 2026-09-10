@@ -1,28 +1,22 @@
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
-import { AdsConsent } from 'react-native-google-mobile-ads';
 import { palette } from '../ui/segregation-presentation';
 
 interface PrivacyFooterProps {
   privacyOptionsRequired: boolean;
   privacyPolicyUrl: string | null;
+  onPrivacyOptionsPress: () => void;
 }
 
 /**
  * Small unobtrusive footer, not a Settings screen. The "Privacy choices"
  * action only appears when UMP reports it is required; the policy link only
  * appears when a public URL is configured (absent in dev/preview builds).
+ * UMP state is owned by useAdsConsent — this component only triggers the
+ * hook-provided action and renders whatever state it reports.
  */
-export function PrivacyFooter({ privacyOptionsRequired, privacyPolicyUrl }: PrivacyFooterProps) {
+export function PrivacyFooter({ privacyOptionsRequired, privacyPolicyUrl, onPrivacyOptionsPress }: PrivacyFooterProps) {
   if (!privacyOptionsRequired && !privacyPolicyUrl) {
     return null;
-  }
-
-  async function handlePrivacyChoices() {
-    try {
-      await AdsConsent.showPrivacyOptionsForm();
-    } catch {
-      // Non-fatal — the entry point stays a no-op if the form can't be shown.
-    }
   }
 
   function handlePrivacyPolicy() {
@@ -44,7 +38,7 @@ export function PrivacyFooter({ privacyOptionsRequired, privacyPolicyUrl }: Priv
       )}
       {privacyOptionsRequired && (
         <Pressable
-          onPress={handlePrivacyChoices}
+          onPress={onPrivacyOptionsPress}
           accessibilityRole="button"
           accessibilityLabel="개인정보 설정 / Privacy choices"
         >

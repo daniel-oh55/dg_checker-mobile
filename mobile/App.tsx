@@ -48,7 +48,7 @@ export default function App() {
 
 function AppContent() {
   const insets = useSafeAreaInsets();
-  const { canRequestAds, privacyOptionsRequired } = useAdsConsent();
+  const { canRequestAds, privacyOptionsRequired, showPrivacyOptions } = useAdsConsent();
   const [inputCount, setInputCount] = useState(2);
   const [unInputs, setUnInputs] = useState<string[]>(Array(MAX_SLOTS).fill(''));
   const [loading, setLoading] = useState(false);
@@ -206,7 +206,11 @@ function AppContent() {
           </>
         )}
 
-        <PrivacyFooter privacyOptionsRequired={privacyOptionsRequired} privacyPolicyUrl={privacyPolicyUrl} />
+        <PrivacyFooter
+          privacyOptionsRequired={privacyOptionsRequired}
+          privacyPolicyUrl={privacyPolicyUrl}
+          onPrivacyOptionsPress={showPrivacyOptions}
+        />
 
         <StatusBar style="dark" />
       </ScrollView>

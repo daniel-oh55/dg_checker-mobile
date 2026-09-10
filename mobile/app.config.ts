@@ -94,6 +94,19 @@ const config: ExpoConfig = {
       'react-native-google-mobile-ads',
       {
         androidAppId: resolveAndroidAdMobAppId(),
+        // Google Mobile Ads native app measurement must not start before UMP
+        // consent has been gathered — see docs/ANDROID_RELEASE.md.
+        delayAppMeasurementInit: true,
+      },
+    ],
+    [
+      'expo-build-properties',
+      {
+        android: {
+          // Required by the UMP SDK bundled with react-native-google-mobile-ads —
+          // see docs/ANDROID_RELEASE.md.
+          extraProguardRules: '-keep class com.google.android.gms.internal.consent_sdk.** { *; }',
+        },
       },
     ],
   ],
