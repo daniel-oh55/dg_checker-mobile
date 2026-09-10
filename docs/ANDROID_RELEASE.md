@@ -174,14 +174,23 @@ eas build --platform android --profile preview
 This profile always uses Google test ads (regardless of what's configured in
 the `preview` EAS environment) and the production DG API.
 
-**Last successful preview build:**
+**Current QA preview build:**
 
-- EAS build ID: `97826bca-99ca-4b06-b726-288b9b7e76ab`
-- Commit: `e71608d9e6f7ebed6b9af38936b5cf90edb73097`
-- APK: <https://expo.dev/artifacts/eas/nsm2TX1g-gxLuB_7ugPdQIyRztkNWVKRzAJ53JY9sOU.apk>
+- EAS build ID: `06fd78a0-c009-4b11-9089-4d5d681e472b`
+- Commit: `b181f4177f62ad8575f01a3f2ef2e32cfe1525e4` (UMP/AdMob consent
+  remediation — delayed app measurement init, UMP ProGuard keep rule,
+  previous-session consent fallback, privacy-choice state refresh)
+- APK: <https://expo.dev/artifacts/eas/Cp4pyBJ3OkYF0XxtMsViSYz6Up5tdWtfde5n-69nFFQ.apk>
 - App version: `1.0.0`, versionCode: `1`
 - Physical-device QA against this APK is still outstanding — see the
   checklist above.
+
+**Superseded preview build:**
+
+- EAS build ID: `97826bca-99ca-4b06-b726-288b9b7e76ab`
+- Commit: `e71608d9e6f7ebed6b9af38936b5cf90edb73097`
+- Superseded by the build above, which contains the UMP/AdMob consent
+  remediation this earlier build predates.
 
 ## Production build
 
