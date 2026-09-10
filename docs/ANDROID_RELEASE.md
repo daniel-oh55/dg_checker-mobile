@@ -17,6 +17,27 @@ Test-vs-production selection is deterministic and build-time only (see
 automatically by EAS during a cloud build. A developer cannot accidentally
 produce a preview build wired to production ad units.
 
+## `react-native-google-mobile-ads` is pinned to an exact version
+
+`mobile/package.json` pins `react-native-google-mobile-ads` to the exact
+version `16.0.0` (not a `^` range). Versions `16.4.0`+ bundle
+`com.google.android.gms:play-services-ads:25.4.0`, whose Kotlin metadata
+(2.3.0) the Kotlin compiler this Expo SDK/React Native version resolves to
+(2.1.20, metadata 2.1.0) cannot read — the release Gradle build fails with:
+
+```
+Execution failed for task ':react-native-google-mobile-ads:compileReleaseKotlin'.
+> Module was compiled with an incompatible version of Kotlin. The binary
+  version of its metadata is 2.3.0, expected version is 2.1.0.
+```
+
+`16.0.0` bundles `play-services-ads:24.6.0`, which predates that bump and
+builds cleanly (verified via an EAS preview build from this branch). Do not
+bump this package past `16.x` without first confirming its bundled
+`play-services-ads` version against a real Android release build — check
+`sdkVersions.android.googleMobileAds` in the candidate version's
+`package.json` before upgrading.
+
 ## Required environment variables for a production build
 
 Set these in the EAS **production** environment (`eas env:create --environment production ...`)

@@ -27,7 +27,7 @@ export function AdBanner({ canRequestAds }: AdBannerProps) {
     <View style={styles.container}>
       <BannerAd
         unitId={resolveBannerAdUnitId()}
-        size={BannerAdSize.LARGE_ANCHORED_ADAPTIVE_BANNER}
+        size={BannerAdSize.ANCHORED_ADAPTIVE_BANNER}
         onAdFailedToLoad={() => setFailedToLoad(true)}
       />
     </View>
