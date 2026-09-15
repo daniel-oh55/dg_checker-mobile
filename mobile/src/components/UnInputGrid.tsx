@@ -82,8 +82,8 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   stepperButton: {
-    width: 44,
-    height: 44,
+    width: 48,
+    height: 48,
     borderRadius: 8,
     backgroundColor: palette.primary,
     alignItems: 'center',

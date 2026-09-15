@@ -153,6 +153,26 @@ export function presentSubsidiaryRisks(subsidiaryRisks: readonly string[]): stri
     .join(', ');
 }
 
+/**
+ * Tone for the Result Summary headline panel, in the same priority order as
+ * {@link summaryHeadline}: REVIEW_REQUIRED outranks SEGREGATION_REQUIRED
+ * outranks an additional requirement outranks a clear/no-level result.
+ * Never green — a CLEAR/level-0 pair may still carry an additional
+ * requirement elsewhere in the batch.
+ */
+export function summaryTone(summary: SegregationBatchSummary): { border: string; bg: string; text: string } {
+  if (summary.reviewRequiredPairs > 0) {
+    return { border: palette.reviewBorder, bg: palette.reviewBg, text: palette.reviewText };
+  }
+  if (summary.segregationRequiredPairs > 0) {
+    return { border: palette.segregationBorder, bg: palette.segregationBg, text: palette.segregationText };
+  }
+  if (summary.additionalRequirementPairs > 0) {
+    return { border: palette.additionalBorder, bg: palette.additionalBg, text: palette.additionalText };
+  }
+  return { border: palette.clearBorder, bg: palette.clearBg, text: palette.clearText };
+}
+
 export function summaryHeadline(summary: SegregationBatchSummary): Bilingual {
   if (summary.reviewRequiredPairs > 0) {
     return { ko: '수동 검토가 필요한 조합이 있습니다.', en: 'Some pairs require manual review.' };
@@ -230,8 +250,8 @@ export function errorPresentation(error: SegregationCheckError): { message: Bili
 }
 
 export const psnUnavailableText: Bilingual = {
-  ko: 'PSN 데이터 업데이트 대기 중',
-  en: 'PSN unavailable in the current dataset',
+  ko: 'PSN 확인 필요',
+  en: 'Proper Shipping Name requires review',
 };
 
 export const noneText: Bilingual = { ko: '없음', en: 'None' };
@@ -242,8 +262,8 @@ export const multipleProfilesText: Bilingual = {
 };
 
 export const operationalNote: Bilingual = {
-  ko: '수동 검토 또는 추가 조건이 표시된 조합은 적재 전 반드시 확인하세요.',
-  en: 'Review flagged pairs and additional requirements before stowage.',
+  ko: '수동 검토 또는 추가 조건이 표시된 조합은 적재 전 반드시 확인하세요. 본 도구는 참고용이며 최종 위험물 승인을 대체하지 않습니다.',
+  en: 'Review flagged pairs and additional requirements before stowage. This is a reference tool, not final dangerous-goods approval.',
 };
 
 export const appHeaderText = {

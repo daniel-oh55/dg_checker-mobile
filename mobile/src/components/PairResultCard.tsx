@@ -44,11 +44,6 @@ export function PairResultCard({ pair }: PairResultCardProps) {
         </Text>
       )}
 
-      <View style={styles.reasonBlock}>
-        <Text style={styles.reasonLabel}>판정 상세 / Decision detail</Text>
-        <Text style={styles.reasonText}>{pair.decision.reason}</Text>
-      </View>
-
       {hasAdditionalRequirements && (
         <View style={styles.additionalBlock}>
           <Text style={styles.additionalHeaderKo}>{additionalRequirementText.header.ko}</Text>
@@ -65,24 +60,28 @@ export function PairResultCard({ pair }: PairResultCardProps) {
 const styles = StyleSheet.create({
   card: {
     backgroundColor: palette.card,
-    borderRadius: 10,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: palette.border,
-    padding: 14,
+    padding: 16,
     marginBottom: 12,
+    shadowColor: palette.navy,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+    elevation: 1,
   },
   pairTitle: {
     fontSize: 15,
     fontWeight: '700',
     color: palette.navy,
-    marginBottom: 8,
+    marginBottom: 10,
   },
   statusBlock: {
     borderWidth: 1,
     borderRadius: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-    marginBottom: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
   },
   statusKo: {
     fontSize: 14,
@@ -96,20 +95,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: palette.textSecondary,
     fontStyle: 'italic',
-    marginBottom: 8,
-  },
-  reasonBlock: {
-    marginBottom: 4,
-  },
-  reasonLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: palette.textSecondary,
-    marginBottom: 2,
-  },
-  reasonText: {
-    fontSize: 13,
-    color: palette.textPrimary,
+    marginTop: 8,
   },
   additionalBlock: {
     marginTop: 10,

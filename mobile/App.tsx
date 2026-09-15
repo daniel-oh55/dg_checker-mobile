@@ -129,7 +129,7 @@ function AppContent() {
     <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={styles.container}
+        contentContainerStyle={[styles.container, { paddingTop: insets.top + 20 }]}
         keyboardShouldPersistTaps="handled"
       >
         <Text style={styles.title}>{appHeaderText.title}</Text>
@@ -233,14 +233,13 @@ const styles = StyleSheet.create({
   container: {
     flexGrow: 1,
     padding: 20,
-    paddingTop: 56,
     paddingBottom: 32,
   },
   title: {
-    fontSize: 22,
+    fontSize: 21,
     fontWeight: '700',
     color: palette.navy,
-    marginBottom: 6,
+    marginBottom: 4,
   },
   subtitleKo: {
     fontSize: 14,
@@ -250,14 +249,19 @@ const styles = StyleSheet.create({
   subtitleEn: {
     fontSize: 12,
     color: palette.textSecondary,
-    marginBottom: 20,
+    marginBottom: 24,
   },
   inputCard: {
     backgroundColor: palette.card,
-    borderRadius: 10,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: palette.border,
     padding: 16,
+    shadowColor: palette.navy,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+    elevation: 1,
   },
   validationBlock: {
     marginTop: 4,
@@ -301,7 +305,7 @@ const styles = StyleSheet.create({
   errorCard: {
     marginTop: 20,
     padding: 14,
-    borderRadius: 8,
+    borderRadius: 12,
     backgroundColor: palette.errorBg,
     borderWidth: 1,
     borderColor: palette.errorBorder,
