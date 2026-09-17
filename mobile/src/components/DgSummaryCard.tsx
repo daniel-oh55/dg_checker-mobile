@@ -13,7 +13,7 @@ interface DgSummaryCardProps {
 }
 
 export function DgSummaryCard({ summary }: DgSummaryCardProps) {
-  const { profiles, variantCount } = summary;
+  const { profiles } = summary;
   const hasMultipleProfiles = profiles.length > 1;
 
   return (
@@ -35,14 +35,6 @@ export function DgSummaryCard({ summary }: DgSummaryCardProps) {
             </View>
           ))
         : profiles.map((profile, index) => <ProfileFields key={index} profile={profile} />)}
-
-      {variantCount > 1 && (
-        <Text style={styles.variantMeta}>
-          {variantCount !== profiles.length
-            ? `${variantCount} variants · ${profiles.length} visible profiles`
-            : `Dataset variants: ${variantCount}`}
-        </Text>
-      )}
     </View>
   );
 }
@@ -74,11 +66,16 @@ function ProfileFields({ profile }: { profile: DgSummaryProfile }) {
 const styles = StyleSheet.create({
   card: {
     backgroundColor: palette.card,
-    borderRadius: 10,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: palette.border,
-    padding: 14,
+    padding: 16,
     marginBottom: 12,
+    shadowColor: palette.navy,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+    elevation: 1,
   },
   heading: {
     fontSize: 15,
@@ -114,10 +111,10 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   psnText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: palette.textPrimary,
-    marginBottom: 6,
+    fontSize: 15,
+    fontWeight: '700',
+    color: palette.navy,
+    marginBottom: 8,
     flexWrap: 'wrap',
   },
   psnUnavailableBlock: {
@@ -153,10 +150,5 @@ const styles = StyleSheet.create({
     color: palette.textPrimary,
     flex: 1,
     flexWrap: 'wrap',
-  },
-  variantMeta: {
-    fontSize: 11,
-    color: palette.textSecondary,
-    marginTop: 8,
   },
 });

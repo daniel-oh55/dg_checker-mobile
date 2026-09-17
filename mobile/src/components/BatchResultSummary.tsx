@@ -1,6 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native';
 import type { SegregationBatchSummary } from '../api/segregation';
-import { palette, summaryHeadline, summaryMetricLabels } from '../ui/segregation-presentation';
+import { palette, summaryHeadline, summaryMetricLabels, summaryTone } from '../ui/segregation-presentation';
 
 interface BatchResultSummaryProps {
   summary: SegregationBatchSummary;
@@ -8,6 +8,7 @@ interface BatchResultSummaryProps {
 
 export function BatchResultSummary({ summary }: BatchResultSummaryProps) {
   const headline = summaryHeadline(summary);
+  const tone = summaryTone(summary);
 
   const metrics: Array<{ label: { ko: string; en: string }; value: number }> = [
     { label: summaryMetricLabels.totalPairs, value: summary.totalPairs },
@@ -22,9 +23,9 @@ export function BatchResultSummary({ summary }: BatchResultSummaryProps) {
       <Text style={styles.sectionTitleKo}>검사 결과</Text>
       <Text style={styles.sectionTitleEn}>Result Summary</Text>
 
-      <View style={styles.headlineBlock}>
-        <Text style={styles.headlineKo}>{headline.ko}</Text>
-        <Text style={styles.headlineEn}>{headline.en}</Text>
+      <View style={[styles.headlineBlock, { borderColor: tone.border, backgroundColor: tone.bg }]}>
+        <Text style={[styles.headlineKo, { color: tone.text }]}>{headline.ko}</Text>
+        <Text style={[styles.headlineEn, { color: tone.text }]}>{headline.en}</Text>
       </View>
 
       <View style={styles.metricsGrid}>
@@ -53,11 +54,16 @@ export function BatchResultSummary({ summary }: BatchResultSummaryProps) {
 const styles = StyleSheet.create({
   card: {
     backgroundColor: palette.card,
-    borderRadius: 10,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: palette.border,
     padding: 16,
     marginTop: 20,
+    shadowColor: palette.navy,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 3,
+    elevation: 1,
   },
   sectionTitleKo: {
     fontSize: 17,

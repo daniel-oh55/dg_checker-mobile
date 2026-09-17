@@ -174,7 +174,21 @@ eas build --platform android --profile preview
 This profile always uses Google test ads (regardless of what's configured in
 the `preview` EAS environment) and the production DG API.
 
-**Current QA preview build:**
+**Current visual/store QA build (UI polish, `feat/store-ready-ui-polish`):**
+
+- EAS build ID: `9c745daa-d982-491e-b482-b0160570385a`
+- Commit: `a06022f8ccfd9fe8036ef9eadb1dd1ce9d04fc59` (feat: polish Android MVP
+  UI for store release — Result Summary tone, decision-detail removal,
+  variant-metadata removal, PSN copy, 48dp stepper targets, safe-area-aware
+  top spacing)
+- APK: <https://expo.dev/artifacts/eas/lA-Vcz5EUdOOK-n58CKXupr8CKHLBWpbkeuh9IlsWRI.apk>
+- Profile: `preview` (Google test ads, production v3 API)
+- App version: `1.0.0`, versionCode: `1`
+- Physical-device QA and store-candidate screenshots against this APK are
+  still outstanding — see the checklist above; requires the physical Galaxy
+  S23 Ultra device.
+
+**Superseded preview build:**
 
 - EAS build ID: `06fd78a0-c009-4b11-9089-4d5d681e472b`
 - Commit: `b181f4177f62ad8575f01a3f2ef2e32cfe1525e4` (UMP/AdMob consent
@@ -182,20 +196,29 @@ the `preview` EAS environment) and the production DG API.
   previous-session consent fallback, privacy-choice state refresh)
 - APK: <https://expo.dev/artifacts/eas/Cp4pyBJ3OkYF0XxtMsViSYz6Up5tdWtfde5n-69nFFQ.apk>
 - App version: `1.0.0`, versionCode: `1`
-- Physical-device QA against this APK is still outstanding — see the
-  checklist above.
+- Superseded by the visual/store QA build above, which carries the
+  store-ready UI polish (Result Summary tone, decision-detail removal,
+  variant-metadata removal, PSN copy) this earlier build predates.
 
 **Superseded preview build:**
 
 - EAS build ID: `97826bca-99ca-4b06-b726-288b9b7e76ab`
 - Commit: `e71608d9e6f7ebed6b9af38936b5cf90edb73097`
-- Superseded by the build above, which contains the UMP/AdMob consent
-  remediation this earlier build predates.
+- Superseded by the UMP/AdMob consent remediation build above.
 
 ## Production build
 
 Not run as part of this PR. After merge, and only once the AdMob console
 gates, Play Console gates, and the data-rights gate above are all satisfied:
+
+**Superseded production AAB:**
+
+- EAS build ID: `f4e11f0b-225b-4e50-9884-45ae7529826a`
+- Commit: `0c9196a9feada24d9ee886fef3930c3ac11ef7e6` (pre-UI-polish)
+- App version: `1.0.0`, versionCode: `1`
+- No Play upload has occurred for this AAB. It is superseded pending a new
+  production build from `main` once this UI-polish PR merges — `versionCode`
+  stays `1` since it was never consumed by a real Play upload.
 
 ```bash
 cd mobile
