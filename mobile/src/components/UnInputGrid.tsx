@@ -26,6 +26,13 @@ export function UnInputGrid({
   const activeIndexes = Array.from({ length: inputCount }, (_, index) => index);
   const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
 
+  // Lowering the count can unmount the focused field without a blur event.
+  // Drop the stale index so raising the count again does not light up a slot
+  // that nothing is actually focused on.
+  if (focusedIndex !== null && focusedIndex >= inputCount) {
+    setFocusedIndex(null);
+  }
+
   const atMin = inputCount <= MIN_COUNT;
   const atMax = inputCount >= MAX_COUNT;
 

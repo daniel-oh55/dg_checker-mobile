@@ -29,7 +29,7 @@ export function PairResultCard({ pair }: PairResultCardProps) {
         <Text style={styles.pairUn}>UN {pair.rightUnNumber}</Text>
       </View>
 
-      <StatusPanel tone={tone} ko={statusText.ko} en={statusText.en} style={styles.status} />
+      <StatusPanel tone={tone} ko={statusText.ko} en={statusText.en} />
 
       {pair.variantResolution === 'STRICTEST_OF_MULTIPLE_VARIANTS' && (
         <Text style={styles.variantNote}>
@@ -72,9 +72,6 @@ const styles = StyleSheet.create({
   pairGlyph: {
     fontSize: 15,
     color: palette.textTertiary,
-  },
-  status: {
-    marginBottom: 0,
   },
   variantNote: {
     ...typography.captionEn,
