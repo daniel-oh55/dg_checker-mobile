@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
 import { resolveBannerAdUnitId } from '../ads/config';
-import { palette } from '../ui/segregation-presentation';
+import { palette } from '../ui/theme';
 
 interface AdBannerProps {
   canRequestAds: boolean;
@@ -37,8 +37,8 @@ export function AdBanner({ canRequestAds }: AdBannerProps) {
 const styles = StyleSheet.create({
   container: {
     alignItems: 'center',
-    backgroundColor: palette.background,
-    borderTopWidth: 1,
-    borderTopColor: palette.border,
+    backgroundColor: palette.surfaceMuted,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: palette.borderStrong,
   },
 });

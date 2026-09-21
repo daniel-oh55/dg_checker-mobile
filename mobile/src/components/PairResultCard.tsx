@@ -2,41 +2,34 @@ import { StyleSheet, Text, View } from 'react-native';
 import type { SegregationBatchPairResult } from '../api/segregation';
 import {
   additionalRequirementText,
+  additionalTone,
   pairStatusText,
-  palette,
+  pairStatusTone,
   variantResolutionNote,
 } from '../ui/segregation-presentation';
+import { palette, radius, spacing, typography } from '../ui/theme';
+import { AppCard } from './AppCard';
+import { StatusPanel } from './StatusPanel';
 
 interface PairResultCardProps {
   pair: SegregationBatchPairResult;
 }
 
-const statusStyles = {
-  CLEAR: { border: palette.clearBorder, bg: palette.clearBg, text: palette.clearText },
-  SEGREGATION_REQUIRED: {
-    border: palette.segregationBorder,
-    bg: palette.segregationBg,
-    text: palette.segregationText,
-  },
-  REVIEW_REQUIRED: { border: palette.reviewBorder, bg: palette.reviewBg, text: palette.reviewText },
-} as const;
-
 export function PairResultCard({ pair }: PairResultCardProps) {
   const status = pair.decision.status;
   const statusText = pairStatusText(status, pair.decision.level);
-  const colors = statusStyles[status];
+  const tone = pairStatusTone(status);
   const hasAdditionalRequirements = pair.additionalRequirements.length > 0;
 
   return (
-    <View style={styles.card}>
-      <Text style={styles.pairTitle}>
-        UN {pair.leftUnNumber} ↔ UN {pair.rightUnNumber}
-      </Text>
-
-      <View style={[styles.statusBlock, { borderColor: colors.border, backgroundColor: colors.bg }]}>
-        <Text style={[styles.statusKo, { color: colors.text }]}>{statusText.ko}</Text>
-        <Text style={[styles.statusEn, { color: colors.text }]}>{statusText.en}</Text>
+    <AppCard style={styles.card}>
+      <View style={styles.pairRow}>
+        <Text style={styles.pairUn}>UN {pair.leftUnNumber}</Text>
+        <Text style={styles.pairGlyph}>↔</Text>
+        <Text style={styles.pairUn}>UN {pair.rightUnNumber}</Text>
       </View>
+
+      <StatusPanel tone={tone} ko={statusText.ko} en={statusText.en} style={styles.status} />
 
       {pair.variantResolution === 'STRICTEST_OF_MULTIPLE_VARIANTS' && (
         <Text style={styles.variantNote}>
@@ -53,70 +46,66 @@ export function PairResultCard({ pair }: PairResultCardProps) {
           </Text>
         </View>
       )}
-    </View>
+    </AppCard>
   );
 }
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: palette.card,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: palette.border,
-    padding: 16,
-    marginBottom: 12,
-    shadowColor: palette.navy,
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 3,
-    elevation: 1,
+    marginBottom: spacing.md,
+    padding: spacing.lg,
   },
-  pairTitle: {
-    fontSize: 15,
+  pairRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
+  pairUn: {
+    fontSize: 17,
     fontWeight: '700',
     color: palette.navy,
-    marginBottom: 10,
+    fontVariant: ['tabular-nums'],
+    letterSpacing: -0.2,
   },
-  statusBlock: {
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
+  pairGlyph: {
+    fontSize: 15,
+    color: palette.textTertiary,
   },
-  statusKo: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  statusEn: {
-    fontSize: 12,
-    marginTop: 2,
+  status: {
+    marginBottom: 0,
   },
   variantNote: {
-    fontSize: 11,
+    ...typography.captionEn,
     color: palette.textSecondary,
     fontStyle: 'italic',
-    marginTop: 8,
+    marginTop: spacing.sm + 2,
   },
   additionalBlock: {
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: palette.additionalBorder,
-    backgroundColor: palette.additionalBg,
-    borderRadius: 8,
-    padding: 10,
+    marginTop: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: additionalTone.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: additionalTone.border,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md + 2,
   },
   additionalHeaderKo: {
     fontSize: 13,
     fontWeight: '700',
-    color: palette.additionalText,
+    color: additionalTone.text,
   },
   additionalHeaderEn: {
-    fontSize: 11,
-    color: palette.additionalText,
-    marginBottom: 6,
+    ...typography.captionEn,
+    color: additionalTone.text,
+    opacity: 0.85,
+    marginTop: 1,
+    marginBottom: spacing.sm,
   },
   additionalFooter: {
-    fontSize: 11,
-    color: palette.additionalText,
+    ...typography.captionEn,
+    color: additionalTone.text,
+    lineHeight: 16,
   },
 });

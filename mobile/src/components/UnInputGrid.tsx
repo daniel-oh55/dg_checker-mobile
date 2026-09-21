@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { palette, sanitizeUnDigits } from '../ui/segregation-presentation';
+import { sanitizeUnDigits } from '../ui/segregation-presentation';
+import { palette, radius, spacing, typography } from '../ui/theme';
 
 const MIN_COUNT = 2;
 const MAX_COUNT = 10;
@@ -9,54 +11,110 @@ interface UnInputGridProps {
   unInputs: string[];
   onChangeInput: (index: number, value: string) => void;
   onChangeCount: (count: number) => void;
+  /** Active slot indexes to outline as invalid. Presentation only — the submit
+   * gate is decided by the caller's existing validation. */
+  errorIndexes?: readonly number[];
 }
 
-export function UnInputGrid({ inputCount, unInputs, onChangeInput, onChangeCount }: UnInputGridProps) {
+export function UnInputGrid({
+  inputCount,
+  unInputs,
+  onChangeInput,
+  onChangeCount,
+  errorIndexes = [],
+}: UnInputGridProps) {
   const activeIndexes = Array.from({ length: inputCount }, (_, index) => index);
+  const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
+
+  const atMin = inputCount <= MIN_COUNT;
+  const atMax = inputCount >= MAX_COUNT;
 
   return (
     <View>
       <View style={styles.stepperRow}>
-        <Text style={styles.stepperLabel}>화물 수 / Number of DGs</Text>
+        <View style={styles.stepperLabelBlock}>
+          <Text style={styles.stepperLabelKo}>화물 수</Text>
+          <Text style={styles.stepperLabelEn}>Number of DGs</Text>
+        </View>
+
         <View style={styles.stepperControl}>
           <Pressable
-            style={[styles.stepperButton, inputCount <= MIN_COUNT && styles.stepperButtonDisabled]}
+            style={({ pressed }) => [
+              styles.stepperButton,
+              pressed && !atMin && styles.stepperButtonPressed,
+            ]}
             onPress={() => onChangeCount(Math.max(MIN_COUNT, inputCount - 1))}
-            disabled={inputCount <= MIN_COUNT}
+            disabled={atMin}
             accessibilityRole="button"
+            accessibilityState={{ disabled: atMin }}
             accessibilityLabel="화물 수 줄이기 / Decrease number of DGs"
           >
-            <Text style={styles.stepperButtonText}>−</Text>
+            <Text style={[styles.stepperGlyph, atMin && styles.stepperGlyphDisabled]}>−</Text>
           </Pressable>
+
+          <View style={styles.stepperDivider} />
           <Text style={styles.stepperCount}>{inputCount}</Text>
+          <View style={styles.stepperDivider} />
+
           <Pressable
-            style={[styles.stepperButton, inputCount >= MAX_COUNT && styles.stepperButtonDisabled]}
+            style={({ pressed }) => [
+              styles.stepperButton,
+              pressed && !atMax && styles.stepperButtonPressed,
+            ]}
             onPress={() => onChangeCount(Math.min(MAX_COUNT, inputCount + 1))}
-            disabled={inputCount >= MAX_COUNT}
+            disabled={atMax}
             accessibilityRole="button"
+            accessibilityState={{ disabled: atMax }}
             accessibilityLabel="화물 수 늘리기 / Increase number of DGs"
           >
-            <Text style={styles.stepperButtonText}>+</Text>
+            <Text style={[styles.stepperGlyph, atMax && styles.stepperGlyphDisabled]}>+</Text>
           </Pressable>
         </View>
       </View>
 
       <View style={styles.grid}>
-        {activeIndexes.map((index) => (
-          <View key={index} style={styles.cell}>
-            <Text style={styles.cellLabel}>UN {index + 1}</Text>
-            <TextInput
-              style={styles.cellInput}
-              value={unInputs[index] ?? ''}
-              onChangeText={(text) => onChangeInput(index, sanitizeUnDigits(text))}
-              placeholder="1002"
-              placeholderTextColor="#9AA7B4"
-              keyboardType="number-pad"
-              maxLength={4}
-              accessibilityLabel={`UN 번호 ${index + 1} 입력 / UN number ${index + 1} input`}
-            />
-          </View>
-        ))}
+        {activeIndexes.map((index) => {
+          const value = unInputs[index] ?? '';
+          const focused = focusedIndex === index;
+          const invalid = errorIndexes.includes(index);
+
+          return (
+            <View key={index} style={styles.cell}>
+              <Text style={styles.cellLabel}>UN {index + 1}</Text>
+              <View
+                style={[
+                  styles.inputShell,
+                  focused && styles.inputShellFocused,
+                  invalid && styles.inputShellInvalid,
+                ]}
+              >
+                <TextInput
+                  style={styles.input}
+                  value={value}
+                  onChangeText={(text) => onChangeInput(index, sanitizeUnDigits(text))}
+                  onFocus={() => setFocusedIndex(index)}
+                  onBlur={() => setFocusedIndex((current) => (current === index ? null : current))}
+                  placeholder="e.g. 1993"
+                  placeholderTextColor={palette.textTertiary}
+                  keyboardType="number-pad"
+                  maxLength={4}
+                  accessibilityLabel={`UN 번호 ${index + 1} 입력 / UN number ${index + 1} input`}
+                />
+                {value.length > 0 && (
+                  <Pressable
+                    onPress={() => onChangeInput(index, '')}
+                    hitSlop={12}
+                    accessibilityRole="button"
+                    accessibilityLabel={`UN 번호 ${index + 1} 지우기 / Clear UN number ${index + 1}`}
+                    style={styles.clearButton}
+                  >
+                    <Text style={styles.clearGlyph}>×</Text>
+                  </Pressable>
+                )}
+              </View>
+            </View>
+          );
+        })}
       </View>
     </View>
   );
@@ -67,68 +125,119 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 16,
+    marginBottom: spacing.xl,
+    gap: spacing.md,
   },
-  stepperLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: palette.navy,
+  stepperLabelBlock: {
     flexShrink: 1,
-    paddingRight: 12,
   },
+  stepperLabelKo: {
+    ...typography.labelKo,
+    color: palette.textPrimary,
+  },
+  stepperLabelEn: {
+    ...typography.captionEn,
+    color: palette.textSecondary,
+    marginTop: 1,
+  },
+  // One cohesive control: two tap zones and the value share a single tinted
+  // track, rather than two isolated square buttons.
   stepperControl: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    backgroundColor: palette.backgroundCool,
+    borderRadius: radius.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.border,
   },
   stepperButton: {
     width: 48,
     height: 48,
-    borderRadius: 8,
-    backgroundColor: palette.primary,
     alignItems: 'center',
     justifyContent: 'center',
+    borderRadius: radius.pill,
   },
-  stepperButtonDisabled: {
-    backgroundColor: palette.primaryDisabled,
+  stepperButtonPressed: {
+    backgroundColor: palette.brandBlueSoft,
   },
-  stepperButtonText: {
-    color: '#FFFFFF',
+  stepperGlyph: {
     fontSize: 22,
-    fontWeight: '700',
-    lineHeight: 24,
+    lineHeight: 26,
+    fontWeight: '600',
+    color: palette.brandBlue,
+  },
+  stepperGlyphDisabled: {
+    color: palette.disabledText,
+    opacity: 0.55,
+  },
+  stepperDivider: {
+    width: StyleSheet.hairlineWidth,
+    height: 22,
+    backgroundColor: palette.border,
   },
   stepperCount: {
-    minWidth: 28,
+    minWidth: 40,
     textAlign: 'center',
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: '700',
     color: palette.navy,
+    fontVariant: ['tabular-nums'],
   },
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    marginHorizontal: -6,
+    marginHorizontal: -spacing.xs - 2,
   },
   cell: {
     width: '50%',
-    paddingHorizontal: 6,
-    marginBottom: 14,
+    paddingHorizontal: spacing.xs + 2,
+    marginBottom: spacing.md,
   },
   cellLabel: {
-    fontSize: 13,
-    fontWeight: '600',
+    ...typography.captionKo,
     color: palette.textSecondary,
     marginBottom: 6,
+    letterSpacing: 0.2,
   },
-  cellInput: {
+  inputShell: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: palette.inputSurface,
+    borderRadius: radius.input,
     borderWidth: 1,
-    borderColor: palette.border,
-    borderRadius: 8,
-    paddingHorizontal: 14,
+    borderColor: palette.inputBorder,
+    paddingRight: 6,
+    minHeight: 50,
+  },
+  inputShellFocused: {
+    borderColor: palette.brandBlue,
+    backgroundColor: palette.surface,
+  },
+  inputShellInvalid: {
+    borderColor: palette.errorAccent,
+    backgroundColor: palette.errorSurface,
+  },
+  input: {
+    flex: 1,
+    paddingHorizontal: spacing.md,
     paddingVertical: 12,
     fontSize: 16,
+    fontWeight: '600',
     color: palette.textPrimary,
-    backgroundColor: palette.card,
+    fontVariant: ['tabular-nums'],
+  },
+  clearButton: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: palette.backgroundCool,
+  },
+  clearGlyph: {
+    fontSize: 16,
+    lineHeight: 18,
+    fontWeight: '600',
+    color: palette.textSecondary,
   },
 });

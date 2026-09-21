@@ -10,37 +10,18 @@ export interface Bilingual {
   en: string;
 }
 
-/**
- * Concept C — "Light Professional Maritime Utility" palette.
- * Off-white ground, white cards, navy headings, and status colors that never
- * use green (a CLEAR/level-0 pair may still carry an additional requirement).
- */
-export const palette = {
-  background: '#F4F6F8',
-  card: '#FFFFFF',
-  border: '#DCE3EA',
-  navy: '#0B2545',
-  navySubdued: '#3C5A78',
-  primary: '#0F4C81',
-  primaryDisabled: '#9FB6CC',
-  textPrimary: '#1B2A3A',
-  textSecondary: '#5A6B7C',
-  clearBorder: '#8FA6BE',
-  clearBg: '#EEF2F6',
-  clearText: '#1F3A54',
-  segregationBorder: '#B3261E',
-  segregationBg: '#FCECEB',
-  segregationText: '#7A1E1A',
-  reviewBorder: '#C77700',
-  reviewBg: '#FFF3E0',
-  reviewText: '#7A4A00',
-  additionalBorder: '#D69A00',
-  additionalBg: '#FFF8E1',
-  additionalText: '#6B4E00',
-  errorBorder: '#B3261E',
-  errorBg: '#FCECEB',
-  errorText: '#7A1E1A',
-} as const;
+import { palette } from './theme';
+
+export { palette };
+
+/** Surface/border/text/accent set for one status tone. Never hue-only: the
+ * wording carries the meaning and `text` only has to stay readable on `surface`. */
+export interface StatusTone {
+  surface: string;
+  border: string;
+  text: string;
+  accent: string;
+}
 
 export function sanitizeUnDigits(raw: string): string {
   return raw.replace(/[^0-9]/g, '').slice(0, 4);
@@ -157,20 +138,65 @@ export function presentSubsidiaryRisks(subsidiaryRisks: readonly string[]): stri
  * Tone for the Result Summary headline panel, in the same priority order as
  * {@link summaryHeadline}: REVIEW_REQUIRED outranks SEGREGATION_REQUIRED
  * outranks an additional requirement outranks a clear/no-level result.
- * Never green — a CLEAR/level-0 pair may still carry an additional
- * requirement elsewhere in the batch.
+ *
+ * The no-level branch may use the muted mint accent, but mint here means
+ * "no numeric level was identified", never "safe" — a CLEAR/level-0 pair may
+ * still carry an additional requirement elsewhere in the batch, and the
+ * headline wording is what actually carries the meaning.
  */
-export function summaryTone(summary: SegregationBatchSummary): { border: string; bg: string; text: string } {
+export function summaryTone(summary: SegregationBatchSummary): StatusTone {
   if (summary.reviewRequiredPairs > 0) {
-    return { border: palette.reviewBorder, bg: palette.reviewBg, text: palette.reviewText };
+    return reviewTone;
   }
   if (summary.segregationRequiredPairs > 0) {
-    return { border: palette.segregationBorder, bg: palette.segregationBg, text: palette.segregationText };
+    return segregationTone;
   }
   if (summary.additionalRequirementPairs > 0) {
-    return { border: palette.additionalBorder, bg: palette.additionalBg, text: palette.additionalText };
+    return additionalTone;
   }
-  return { border: palette.clearBorder, bg: palette.clearBg, text: palette.clearText };
+  return clearTone;
+}
+
+const segregationTone: StatusTone = {
+  surface: palette.segregationSurface,
+  border: palette.segregationBorder,
+  text: palette.segregationText,
+  accent: palette.segregationAccent,
+};
+
+const reviewTone: StatusTone = {
+  surface: palette.reviewSurface,
+  border: palette.reviewBorder,
+  text: palette.reviewText,
+  accent: palette.reviewAccent,
+};
+
+const additionalTone: StatusTone = {
+  surface: palette.additionalSurface,
+  border: palette.additionalBorder,
+  text: palette.additionalText,
+  accent: palette.additionalAccent,
+};
+
+const clearTone: StatusTone = {
+  surface: palette.clearSurface,
+  border: palette.clearBorder,
+  text: palette.clearText,
+  accent: palette.clearAccent,
+};
+
+export { additionalTone };
+
+/** Tone for one pair's status panel. Mirrors {@link summaryTone}'s vocabulary. */
+export function pairStatusTone(status: DecisionStatus): StatusTone {
+  switch (status) {
+    case 'SEGREGATION_REQUIRED':
+      return segregationTone;
+    case 'REVIEW_REQUIRED':
+      return reviewTone;
+    case 'CLEAR':
+      return clearTone;
+  }
 }
 
 export function summaryHeadline(summary: SegregationBatchSummary): Bilingual {
@@ -197,6 +223,45 @@ export const summaryMetricLabels = {
   additionalRequirement: { ko: '추가 조건', en: 'Additional' } satisfies Bilingual,
   highestLevel: { ko: '조합 중 최고 Level', en: 'Highest pair level' } satisfies Bilingual,
 };
+
+/**
+ * Accent colour for each summary metric tile. Used only for the small badge
+ * strip behind the value, never as a filled card background, so the grid
+ * stays readable and no tile shouts louder than the headline panel.
+ */
+export const summaryMetricAccents = {
+  totalPairs: { tint: palette.brandBlueSoft, ink: palette.navy },
+  segregationRequired: { tint: palette.segregationSurface, ink: palette.segregationText },
+  reviewRequired: { tint: palette.reviewSurface, ink: palette.reviewText },
+  levelZero: { tint: palette.mintSurface, ink: palette.mintText },
+  additionalRequirement: { tint: palette.additionalSurface, ink: palette.additionalText },
+  highestLevel: { tint: palette.brandBlueSoft, ink: palette.brandBlue },
+} as const;
+
+/**
+ * Presentation-only: which active input slots should carry an error outline.
+ *
+ * Deliberately narrower than {@link validateActiveInputs}, which decides
+ * whether the form may be submitted and is unchanged. Only a field that is
+ * actually wrong on its own terms is outlined — a duplicate of another entered
+ * value. A slot the operator simply has not filled in yet is left neutral, so
+ * entering ten UN numbers does not paint the whole grid red; the validation
+ * panel already states that every number is required.
+ */
+export function duplicateInputIndexes(values: string[]): number[] {
+  const trimmed = values.map((value) => value.trim());
+  const duplicates = findDuplicateCanonicalUnNumbers(trimmed.filter((value) => value.length > 0));
+  if (duplicates.length === 0) {
+    return [];
+  }
+  const flagged: number[] = [];
+  trimmed.forEach((value, index) => {
+    if (value.length > 0 && duplicates.includes(canonicalUnNumber(value))) {
+      flagged.push(index);
+    }
+  });
+  return flagged;
+}
 
 export function errorPresentation(error: SegregationCheckError): { message: Bilingual; unNumbers?: string[] } {
   const code: SegregationCheckErrorCode = error.code;
