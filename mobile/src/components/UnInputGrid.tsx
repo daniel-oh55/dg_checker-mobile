@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { sanitizeUnDigits } from '../ui/segregation-presentation';
 import { palette, radius, spacing, typography } from '../ui/theme';
@@ -29,9 +29,11 @@ export function UnInputGrid({
   // Lowering the count can unmount the focused field without a blur event.
   // Drop the stale index so raising the count again does not light up a slot
   // that nothing is actually focused on.
-  if (focusedIndex !== null && focusedIndex >= inputCount) {
-    setFocusedIndex(null);
-  }
+  useEffect(() => {
+    if (focusedIndex !== null && focusedIndex >= inputCount) {
+      setFocusedIndex(null);
+    }
+  }, [focusedIndex, inputCount]);
 
   const atMin = inputCount <= MIN_COUNT;
   const atMax = inputCount >= MAX_COUNT;
