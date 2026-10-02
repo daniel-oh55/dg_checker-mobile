@@ -20,19 +20,22 @@ import {
 import { resolvePrivacyPolicyUrl } from './src/ads/config';
 import { useAdsConsent } from './src/ads/useAdsConsent';
 import { AdBanner } from './src/components/AdBanner';
+import { AppCard } from './src/components/AppCard';
 import { BatchResultSummary } from './src/components/BatchResultSummary';
 import { DgSummaryCard } from './src/components/DgSummaryCard';
 import { PairResultCard } from './src/components/PairResultCard';
 import { PrivacyFooter } from './src/components/PrivacyFooter';
+import { SectionHeader } from './src/components/SectionHeader';
 import { UnInputGrid } from './src/components/UnInputGrid';
 import {
   appHeaderText,
   type Bilingual,
+  duplicateInputIndexes,
   errorPresentation,
   operationalNote,
-  palette,
   validateActiveInputs,
 } from './src/ui/segregation-presentation';
+import { palette, radius, spacing, typography } from './src/ui/theme';
 
 const privacyPolicyUrl = resolvePrivacyPolicyUrl();
 
@@ -62,6 +65,13 @@ function AppContent() {
   const allEmpty = activeInputs.every((value) => value.trim().length === 0);
   const validationMessage = allEmpty ? null : validateActiveInputs(activeInputs);
   const canSubmit = !allEmpty && !validationMessage && !loading;
+  // Loading keeps the primary surface so the white spinner stays legible;
+  // `disabled` below is still driven by `canSubmit` exactly as before.
+  const showDisabledSurface = !canSubmit && !loading;
+
+  // Outlined fields are a subset of what blocks submission; the panel below
+  // still carries the full message. Nothing here affects `canSubmit`.
+  const invalidIndexes = validationMessage ? duplicateInputIndexes(activeInputs) : [];
 
   function invalidateResult() {
     setResult(null);
@@ -129,53 +139,74 @@ function AppContent() {
     <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={[styles.container, { paddingTop: insets.top + 20 }]}
+        contentContainerStyle={[styles.container, { paddingTop: insets.top + spacing.xxl }]}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={styles.title}>{appHeaderText.title}</Text>
-        <Text style={styles.subtitleKo}>{appHeaderText.primary.ko}</Text>
-        <Text style={styles.subtitleEn}>{appHeaderText.primary.en}</Text>
+        <View style={styles.header}>
+          {/* The single maritime identity detail: a short teal keel line under
+              the wordmark. No asset, no hero image, no slogan. */}
+          <View style={styles.headerAccent} />
+          <Text style={styles.title}>{appHeaderText.title}</Text>
+          <Text style={styles.subtitleKo}>{appHeaderText.primary.ko}</Text>
+          <Text style={styles.subtitleEn}>{appHeaderText.primary.en}</Text>
+        </View>
 
-        <View style={styles.inputCard}>
+        <AppCard>
           <UnInputGrid
             inputCount={inputCount}
             unInputs={unInputs}
             onChangeInput={handleChangeInput}
             onChangeCount={handleChangeCount}
+            errorIndexes={invalidIndexes}
           />
 
           {validationMessage && (
-            <View style={styles.validationBlock}>
-              <Text style={styles.validationKo}>{validationMessage.ko}</Text>
-              <Text style={styles.validationEn}>{validationMessage.en}</Text>
+            <View style={styles.validationPanel}>
+              <View style={styles.validationAccent} />
+              <View style={styles.validationContent}>
+                <Text style={styles.validationKo}>{validationMessage.ko}</Text>
+                <Text style={styles.validationEn}>{validationMessage.en}</Text>
+              </View>
             </View>
           )}
 
           <Pressable
-            style={[styles.button, !canSubmit && styles.buttonDisabled]}
+            style={({ pressed }) => [
+              styles.button,
+              pressed && canSubmit && styles.buttonPressed,
+              showDisabledSurface && styles.buttonDisabled,
+            ]}
             onPress={handleSubmit}
             disabled={!canSubmit}
             accessibilityRole="button"
+            accessibilityState={{ disabled: !canSubmit }}
             accessibilityLabel="격리조건 확인 / Check segregation"
           >
             {loading ? (
               <View style={styles.buttonContent}>
-                <ActivityIndicator color="#fff" />
+                <ActivityIndicator color={palette.onPrimary} />
                 <Text style={styles.buttonText}>확인 중... / Checking...</Text>
               </View>
             ) : (
               <View style={styles.buttonContent}>
-                <Text style={styles.buttonText}>격리조건 확인</Text>
-                <Text style={styles.buttonTextEn}>Check Segregation</Text>
+                <Text style={[styles.buttonText, showDisabledSurface && styles.buttonTextDisabled]}>
+                  격리조건 확인
+                </Text>
+                <Text style={[styles.buttonTextEn, showDisabledSurface && styles.buttonTextDisabled]}>
+                  Check Segregation
+                </Text>
               </View>
             )}
           </Pressable>
-        </View>
+        </AppCard>
 
         {errorState && (
-          <View style={styles.errorCard}>
-            <Text style={styles.errorKo}>{errorState.message.ko}</Text>
-            <Text style={styles.errorEn}>{errorState.message.en}</Text>
+          <View style={styles.errorPanel}>
+            <View style={styles.errorAccent} />
+            <View style={styles.errorContent}>
+              <Text style={styles.errorKo}>{errorState.message.ko}</Text>
+              <Text style={styles.errorEn}>{errorState.message.en}</Text>
+            </View>
           </View>
         )}
 
@@ -183,23 +214,17 @@ function AppContent() {
           <>
             <BatchResultSummary summary={result.summary} />
 
-            <View style={styles.sectionHeaderBlock}>
-              <Text style={styles.sectionTitleKo}>조합별 결과 ({pairCountLabel})</Text>
-              <Text style={styles.sectionTitleEn}>Pair Details</Text>
-            </View>
+            <SectionHeader ko="조합별 결과" en="Pair Details" trailing={pairCountLabel} />
             {result.pairs.map((pair, index) => (
               <PairResultCard key={`${pair.leftUnNumber}-${pair.rightUnNumber}-${index}`} pair={pair} />
             ))}
 
-            <View style={styles.sectionHeaderBlock}>
-              <Text style={styles.sectionTitleKo}>입력 화물 정보</Text>
-              <Text style={styles.sectionTitleEn}>DG Summary</Text>
-            </View>
+            <SectionHeader ko="입력 화물 정보" en="DG Summary" />
             {result.dgSummaries.map((dgSummary) => (
               <DgSummaryCard key={dgSummary.unNumber} summary={dgSummary} />
             ))}
 
-            <View style={styles.operationalNoteBlock}>
+            <View style={styles.operationalNote}>
               <Text style={styles.operationalNoteKo}>{operationalNote.ko}</Text>
               <Text style={styles.operationalNoteEn}>{operationalNote.en}</Text>
             </View>
@@ -215,7 +240,7 @@ function AppContent() {
         <StatusBar style="dark" />
       </ScrollView>
 
-      <View style={{ paddingBottom: insets.bottom }}>
+      <View style={{ paddingBottom: insets.bottom, backgroundColor: palette.surfaceMuted }}>
         <AdBanner canRequestAds={canRequestAds} />
       </View>
     </KeyboardAvoidingView>
@@ -232,121 +257,147 @@ const styles = StyleSheet.create({
   },
   container: {
     flexGrow: 1,
-    padding: 20,
-    paddingBottom: 32,
+    paddingHorizontal: spacing.xl,
+    paddingBottom: spacing.xxl,
+  },
+  header: {
+    marginBottom: spacing.xxl,
+  },
+  headerAccent: {
+    width: 32,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: palette.teal,
+    marginBottom: spacing.md,
   },
   title: {
-    fontSize: 21,
-    fontWeight: '700',
+    ...typography.appTitle,
     color: palette.navy,
-    marginBottom: 4,
   },
   subtitleKo: {
-    fontSize: 14,
-    fontWeight: '600',
+    ...typography.bodyKo,
     color: palette.textPrimary,
+    marginTop: spacing.sm,
+    lineHeight: 21,
   },
   subtitleEn: {
-    fontSize: 12,
+    ...typography.bodyEn,
     color: palette.textSecondary,
-    marginBottom: 24,
+    marginTop: 2,
+    lineHeight: 18,
   },
-  inputCard: {
-    backgroundColor: palette.card,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: palette.border,
-    padding: 16,
-    shadowColor: palette.navy,
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 3,
-    elevation: 1,
+  validationPanel: {
+    flexDirection: 'row',
+    marginTop: spacing.xs,
+    marginBottom: spacing.lg,
+    borderRadius: radius.md,
+    backgroundColor: palette.errorSurface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.errorBorder,
+    overflow: 'hidden',
   },
-  validationBlock: {
-    marginTop: 4,
-    marginBottom: 12,
+  validationAccent: {
+    width: 3,
+    backgroundColor: palette.errorAccent,
+  },
+  validationContent: {
+    flex: 1,
+    paddingVertical: spacing.md - 2,
+    paddingHorizontal: spacing.md + 2,
   },
   validationKo: {
-    color: palette.errorText,
     fontSize: 13,
-    fontWeight: '600',
+    fontWeight: '700',
+    color: palette.errorText,
+    lineHeight: 19,
   },
   validationEn: {
-    color: palette.errorText,
     fontSize: 12,
+    color: palette.errorText,
+    opacity: 0.85,
+    marginTop: 1,
   },
   button: {
-    backgroundColor: palette.primary,
-    borderRadius: 8,
-    paddingVertical: 14,
+    backgroundColor: palette.brandBlueDeep,
+    borderRadius: radius.button,
+    paddingVertical: spacing.lg,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 8,
-    minHeight: 48,
+    marginTop: spacing.sm,
+    minHeight: 56,
   },
+  buttonPressed: {
+    backgroundColor: palette.navy,
+  },
+  // A deliberate disabled surface rather than a faded primary: the control
+  // still reads as a real control, just clearly not actionable yet.
   buttonDisabled: {
-    backgroundColor: palette.primaryDisabled,
+    backgroundColor: palette.disabledSurface,
   },
   buttonContent: {
     flexDirection: 'row',
     alignItems: 'baseline',
-    gap: 8,
+    gap: spacing.sm,
   },
   buttonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  buttonTextEn: {
-    color: '#E4ECF5',
-    fontSize: 12,
-  },
-  errorCard: {
-    marginTop: 20,
-    padding: 14,
-    borderRadius: 12,
-    backgroundColor: palette.errorBg,
-    borderWidth: 1,
-    borderColor: palette.errorBorder,
-  },
-  errorKo: {
-    color: palette.errorText,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  errorEn: {
-    color: palette.errorText,
-    fontSize: 12,
-    marginTop: 2,
-  },
-  sectionHeaderBlock: {
-    marginTop: 24,
-    marginBottom: 10,
-  },
-  sectionTitleKo: {
+    color: palette.onPrimary,
     fontSize: 17,
     fontWeight: '700',
-    color: palette.navy,
+    letterSpacing: -0.2,
   },
-  sectionTitleEn: {
+  buttonTextEn: {
+    color: palette.onPrimaryMuted,
+    fontSize: 13,
+  },
+  buttonTextDisabled: {
+    color: palette.disabledText,
+  },
+  errorPanel: {
+    flexDirection: 'row',
+    marginTop: spacing.xl,
+    borderRadius: radius.lg,
+    backgroundColor: palette.errorSurface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: palette.errorBorder,
+    overflow: 'hidden',
+  },
+  errorAccent: {
+    width: 4,
+    backgroundColor: palette.errorAccent,
+  },
+  errorContent: {
+    flex: 1,
+    paddingVertical: spacing.md + 2,
+    paddingHorizontal: spacing.lg,
+  },
+  errorKo: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: palette.errorText,
+    lineHeight: 21,
+  },
+  errorEn: {
     fontSize: 12,
-    color: palette.textSecondary,
+    color: palette.errorText,
+    opacity: 0.85,
+    marginTop: 2,
   },
-  operationalNoteBlock: {
-    marginTop: 12,
-    paddingTop: 14,
-    borderTopWidth: 1,
-    borderTopColor: palette.border,
+  operationalNote: {
+    marginTop: spacing.lg,
+    padding: spacing.lg,
+    borderRadius: radius.lg,
+    backgroundColor: palette.surfaceMuted,
   },
   operationalNoteKo: {
     fontSize: 12,
     fontWeight: '600',
-    color: palette.textSecondary,
+    color: palette.textPrimary,
+    lineHeight: 19,
   },
   operationalNoteEn: {
     fontSize: 11,
     color: palette.textSecondary,
-    marginTop: 2,
+    lineHeight: 17,
+    marginTop: spacing.xs + 2,
   },
 });

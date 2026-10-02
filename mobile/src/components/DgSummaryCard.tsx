@@ -1,12 +1,14 @@
 import { StyleSheet, Text, View } from 'react-native';
 import type { DgSummary, DgSummaryProfile } from '../api/segregation';
 import {
+  additionalTone,
   multipleProfilesText,
-  palette,
   presentPrimaryClass,
   presentSubsidiaryRisks,
   psnUnavailableText,
 } from '../ui/segregation-presentation';
+import { palette, radius, spacing, typography } from '../ui/theme';
+import { AppCard } from './AppCard';
 
 interface DgSummaryCardProps {
   summary: DgSummary;
@@ -17,15 +19,17 @@ export function DgSummaryCard({ summary }: DgSummaryCardProps) {
   const hasMultipleProfiles = profiles.length > 1;
 
   return (
-    <View style={styles.card}>
-      <Text style={styles.heading}>UN {summary.unNumber}</Text>
+    <AppCard style={styles.card}>
+      <View style={styles.headerRow}>
+        <Text style={styles.unNumber}>UN {summary.unNumber}</Text>
+        {hasMultipleProfiles && (
+          <View style={styles.multiBadge}>
+            <Text style={styles.multiBadgeKo}>{multipleProfilesText.ko}</Text>
+          </View>
+        )}
+      </View>
 
-      {hasMultipleProfiles && (
-        <View style={styles.multiHeaderBlock}>
-          <Text style={styles.multiHeaderKo}>{multipleProfilesText.ko}</Text>
-          <Text style={styles.multiHeaderEn}>{multipleProfilesText.en}</Text>
-        </View>
-      )}
+      {hasMultipleProfiles && <Text style={styles.multiNoteEn}>{multipleProfilesText.en}</Text>}
 
       {hasMultipleProfiles
         ? profiles.map((profile, index) => (
@@ -35,7 +39,7 @@ export function DgSummaryCard({ summary }: DgSummaryCardProps) {
             </View>
           ))
         : profiles.map((profile, index) => <ProfileFields key={index} profile={profile} />)}
-    </View>
+    </AppCard>
   );
 }
 
@@ -51,13 +55,16 @@ function ProfileFields({ profile }: { profile: DgSummaryProfile }) {
         <Text style={styles.psnText}>{profile.properShippingName}</Text>
       )}
 
-      <View style={styles.attributeRow}>
-        <Text style={styles.attributeLabel}>Class</Text>
-        <Text style={styles.attributeValue}>{presentPrimaryClass(profile.primaryClass)}</Text>
-      </View>
-      <View style={styles.attributeRow}>
-        <Text style={styles.attributeLabel}>Sub Risk</Text>
-        <Text style={styles.attributeValue}>{presentSubsidiaryRisks(profile.subsidiaryRisks)}</Text>
+      <View style={styles.attributeStrip}>
+        <View style={styles.attributeCell}>
+          <Text style={styles.attributeLabel}>Class</Text>
+          <Text style={styles.attributeValue}>{presentPrimaryClass(profile.primaryClass)}</Text>
+        </View>
+        <View style={styles.attributeDivider} />
+        <View style={styles.attributeCell}>
+          <Text style={styles.attributeLabel}>Sub Risk</Text>
+          <Text style={styles.attributeValue}>{presentSubsidiaryRisks(profile.subsidiaryRisks)}</Text>
+        </View>
       </View>
     </View>
   );
@@ -65,90 +72,114 @@ function ProfileFields({ profile }: { profile: DgSummaryProfile }) {
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: palette.card,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: palette.border,
-    padding: 16,
-    marginBottom: 12,
-    shadowColor: palette.navy,
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.06,
-    shadowRadius: 3,
-    elevation: 1,
+    marginBottom: spacing.md,
+    padding: spacing.lg,
   },
-  heading: {
-    fontSize: 15,
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  unNumber: {
+    fontSize: 17,
     fontWeight: '700',
     color: palette.navy,
-    marginBottom: 8,
+    fontVariant: ['tabular-nums'],
+    letterSpacing: -0.2,
   },
-  multiHeaderBlock: {
-    marginBottom: 8,
+  multiBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: radius.sm,
+    backgroundColor: additionalTone.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: additionalTone.border,
   },
-  multiHeaderKo: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: palette.textPrimary,
-  },
-  multiHeaderEn: {
+  multiBadgeKo: {
     fontSize: 11,
+    fontWeight: '700',
+    color: additionalTone.text,
+  },
+  multiNoteEn: {
+    ...typography.captionEn,
     color: palette.textSecondary,
+    marginTop: 3,
   },
   profileBlock: {
-    borderTopWidth: 1,
+    borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: palette.border,
-    paddingTop: 8,
-    marginTop: 8,
+    paddingTop: spacing.md,
+    marginTop: spacing.md,
   },
   profileLabel: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     color: palette.textSecondary,
-    marginBottom: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+    marginBottom: spacing.sm,
   },
   fieldsBlock: {
-    marginBottom: 2,
+    marginTop: spacing.md,
   },
+  // Long proper shipping names are common and must wrap freely rather than
+  // truncate — the name is the operator's primary identification of the cargo.
   psnText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: palette.navy,
-    marginBottom: 8,
-    flexWrap: 'wrap',
+    fontSize: 16,
+    fontWeight: '600',
+    lineHeight: 22,
+    color: palette.textPrimary,
+    marginBottom: spacing.md,
   },
   psnUnavailableBlock: {
-    backgroundColor: palette.additionalBg,
-    borderWidth: 1,
-    borderColor: palette.additionalBorder,
-    borderRadius: 6,
-    paddingVertical: 6,
-    paddingHorizontal: 8,
-    marginBottom: 6,
+    backgroundColor: additionalTone.surface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: additionalTone.border,
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm + 2,
+    paddingHorizontal: spacing.md,
+    marginBottom: spacing.md,
   },
   psnUnavailableKo: {
     fontSize: 13,
-    fontWeight: '600',
-    color: palette.additionalText,
+    fontWeight: '700',
+    color: additionalTone.text,
   },
   psnUnavailableEn: {
-    fontSize: 11,
-    color: palette.additionalText,
+    ...typography.captionEn,
+    color: additionalTone.text,
+    opacity: 0.85,
+    marginTop: 1,
   },
-  attributeRow: {
+  attributeStrip: {
     flexDirection: 'row',
-    marginBottom: 2,
+    backgroundColor: palette.backgroundCool,
+    borderRadius: radius.md,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md + 2,
+  },
+  attributeCell: {
+    flex: 1,
+  },
+  attributeDivider: {
+    width: StyleSheet.hairlineWidth,
+    alignSelf: 'stretch',
+    backgroundColor: palette.borderStrong,
+    marginHorizontal: spacing.md,
   },
   attributeLabel: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
     color: palette.textSecondary,
-    width: 70,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
   },
   attributeValue: {
-    fontSize: 13,
+    fontSize: 15,
+    fontWeight: '600',
     color: palette.textPrimary,
-    flex: 1,
-    flexWrap: 'wrap',
+    marginTop: 3,
+    lineHeight: 20,
   },
 });

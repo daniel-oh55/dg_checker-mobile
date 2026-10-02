@@ -1,5 +1,5 @@
 import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
-import { palette } from '../ui/segregation-presentation';
+import { palette, spacing } from '../ui/theme';
 
 interface PrivacyFooterProps {
   privacyOptionsRequired: boolean;
@@ -54,14 +54,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'center',
-    gap: 16,
-    marginTop: 16,
-    paddingTop: 12,
-    borderTopWidth: 1,
+    gap: spacing.xl,
+    marginTop: spacing.xxl,
+    paddingTop: spacing.lg,
+    borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: palette.border,
   },
   link: {
-    fontSize: 11,
+    fontSize: 12,
     color: palette.textSecondary,
     textDecorationLine: 'underline',
   },
