@@ -450,8 +450,21 @@ const ADDITIONAL_REQUIREMENT_PATTERNS = [
   /^segregation from foodstuffs as in/i,
   /^shall not be stowed together with/i,
   /odour-absorbing cargoes/i,
-  /there is no need to apply the provisions on segregation/i,
 ];
+
+/**
+ * Wording that *disapplies* segregation rather than imposing it, under a
+ * condition this converter cannot prove from two DG records.
+ *
+ * Checked before the condition patterns below, because an exemption and a
+ * conditional obligation need opposite fail-closed treatment: declining to
+ * apply an obligation would under-segregate, so those go to REVIEW_ONLY,
+ * while declining to apply an exemption simply leaves the ordinary
+ * requirement in force, which is already the safe answer. Routing an
+ * exemption to ADDITIONAL_REQUIREMENT would be worse than either — it tells
+ * the operator a relaxation is an outstanding obligation.
+ */
+const EXEMPTION_PATTERNS = [/there is no need to apply the provisions on segregation/i];
 
 /**
  * Wording that carries a condition or exception this converter cannot prove
@@ -542,18 +555,21 @@ function matchLevelPhrase(plainText) {
  * Converts one authorized SG row into exactly one canonical sgRules entry.
  *
  * Classification order matters and is deliberate:
- *   1. "[Reserved]"                -> RESERVED
- *   2. non-level obligation wording -> ADDITIONAL_REQUIREMENT
- *   3. condition/exception wording  -> REVIEW_ONLY
- *   4. "Segregation as for ..."     -> AS_FOR_CLASS (or REVIEW_ONLY if the
+ *   1. "[Reserved]"                 -> RESERVED
+ *   2. segregation-disapplying wording -> EXEMPTION
+ *   3. non-level obligation wording -> ADDITIONAL_REQUIREMENT
+ *   4. condition/exception wording  -> REVIEW_ONLY
+ *   5. "Segregation as for ..."     -> AS_FOR_CLASS (or REVIEW_ONLY if the
  *                                      substituted class has no matrix row)
- *   5. level wording + target       -> DIRECT_SGG / DIRECT_UN / DIRECT_CLASS
+ *   6. level wording + target       -> DIRECT_SGG / DIRECT_UN / DIRECT_CLASS
  *                                      (or REVIEW_ONLY for a prose target)
- *   6. anything else                -> hard failure
+ *   7. anything else                -> hard failure
  *
- * Step 3 runs before steps 4-5 so a conditional rule can never be reduced to
- * its unconditional-looking core, and step 6 means unrecognized wording stops
- * the conversion instead of quietly vanishing.
+ * Step 2 runs before step 3 so a provision that removes segregation is never
+ * reported as an obligation to satisfy. Step 4 runs before steps 5-6 so a
+ * conditional rule can never be reduced to its unconditional-looking core,
+ * and step 7 means unrecognized wording stops the conversion instead of
+ * quietly vanishing.
  */
 export function parseSgRow(code, rawDescription) {
   const sourceText = normalizeSgSourceText(rawDescription);
@@ -570,6 +586,10 @@ export function parseSgRow(code, rawDescription) {
   // Quote characters carry no meaning for matching, and the level phrases are
   // quoted in the source ("away from"), so compare against a quote-free copy.
   const plain = sourceText.replace(/["']/g, '').trim();
+
+  if (EXEMPTION_PATTERNS.some((pattern) => pattern.test(plain))) {
+    return { code, ruleType: 'EXEMPTION', targets: [], level: null, sourceText };
+  }
 
   if (ADDITIONAL_REQUIREMENT_PATTERNS.some((pattern) => pattern.test(plain))) {
     return { code, ruleType: 'ADDITIONAL_REQUIREMENT', targets: [], level: null, sourceText };

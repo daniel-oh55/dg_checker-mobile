@@ -165,6 +165,27 @@ describe('parseSgRow — rule classification', () => {
     assert.equal(rule.level, null);
   });
 
+  it('classifies segregation-disapplying wording as EXEMPTION, not as an obligation', () => {
+    // A provision that removes segregation must never reach the operator as
+    // an additional requirement to satisfy.
+    const rule = parseSgRow(
+      'SG9030',
+      'Within the synthetic assembly, there is no need to apply the provisions on segregation of substances.',
+    );
+    assert.equal(rule.ruleType, 'EXEMPTION');
+    assert.deepEqual(rule.targets, []);
+    assert.equal(rule.level, null);
+  });
+
+  it('classifies an exemption ahead of the obligation wording it also contains', () => {
+    const rule = parseSgRow(
+      'SG9031',
+      'Shall not be stowed together with synthetic material; there is no need to apply the provisions on ' +
+        'segregation of substances in that case.',
+    );
+    assert.equal(rule.ruleType, 'EXEMPTION');
+  });
+
   it('classifies a "[Reserved]" row as RESERVED', () => {
     const rule = parseSgRow('SG9018', '[Reserved]');
     assert.equal(rule.ruleType, 'RESERVED');
@@ -260,8 +281,9 @@ describe('convertSgSheet — structural integrity', () => {
       ['SG9003', 'Stow “separated from” SYNTHETIC SUBSTANCE (UN 9001).'],
       ['SG9004', 'Segregation as for class 3.'],
       ['SG9005', 'In addition: a synthetic obligation applies.'],
-      ['SG9006', 'Stow “separated from” synthetic prose substance.'],
-      ['SG9007', '[Reserved]'],
+      ['SG9006', 'There is no need to apply the provisions on segregation of substances in this synthetic case.'],
+      ['SG9007', 'Stow “separated from” synthetic prose substance.'],
+      ['SG9008', '[Reserved]'],
     ]);
 
     assert.deepEqual(
@@ -272,6 +294,7 @@ describe('convertSgSheet — structural integrity', () => {
         'DIRECT_UN',
         'AS_FOR_CLASS',
         'ADDITIONAL_REQUIREMENT',
+        'EXEMPTION',
         'REVIEW_ONLY',
         'RESERVED',
       ],

@@ -20,6 +20,16 @@ export type SgRuleType =
   | 'AS_FOR_CLASS'
   /** A non-level obligation that must be surfaced, never folded into 0-4. */
   | 'ADDITIONAL_REQUIREMENT'
+  /**
+   * A provision that *removes* or disapplies segregation rather than
+   * imposing it, under a condition this engine cannot verify. Failing closed
+   * means declining the relaxation: the rule contributes nothing, so the
+   * un-relaxed requirement stands. Deliberately not ADDITIONAL_REQUIREMENT
+   * (which would present a relaxation to the operator as an obligation) and
+   * deliberately not REVIEW_ONLY (escalating a provision that can only ever
+   * lower a requirement buys no safety and costs a determinable answer).
+   */
+  | 'EXEMPTION'
   /** Source conditions this engine cannot evaluate; forces manual review. */
   | 'REVIEW_ONLY'
   /** "[Reserved]" in the authorized source; must never be applied. */

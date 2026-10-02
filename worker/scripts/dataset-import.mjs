@@ -63,7 +63,7 @@ export const SOURCE_TOKEN_LEVELS = new Map([
 /** Rule types that carry a numeric level and at least one target. */
 const DIRECT_RULE_TYPES = new Set(['DIRECT_CLASS', 'DIRECT_SGG', 'DIRECT_UN']);
 /** Rule types that carry neither a level nor any target. */
-const NON_EVALUABLE_RULE_TYPES = new Set(['ADDITIONAL_REQUIREMENT', 'REVIEW_ONLY', 'RESERVED']);
+const NON_EVALUABLE_RULE_TYPES = new Set(['ADDITIONAL_REQUIREMENT', 'EXEMPTION', 'REVIEW_ONLY', 'RESERVED']);
 
 export const SG_RULE_TYPES = new Set([...DIRECT_RULE_TYPES, 'AS_FOR_CLASS', ...NON_EVALUABLE_RULE_TYPES]);
 

@@ -62,6 +62,13 @@ const SG_RULES: SgRuleSet = createSgRuleSet([
   sgRule({ code: 'SG_ADDITIONAL_2', ruleType: 'ADDITIONAL_REQUIREMENT' }),
   sgRule({ code: 'SG_REVIEW', ruleType: 'REVIEW_ONLY' }),
   sgRule({ code: 'SG_RESERVED', ruleType: 'RESERVED' }),
+  sgRule({ code: 'SG_EXEMPTION', ruleType: 'EXEMPTION' }),
+  sgRule({ code: 'SG_AWAY_FROM_8', ruleType: 'DIRECT_CLASS', targets: ['8'], level: 1 }),
+  sgRule({ code: 'SG_SEPARATED_FROM_8', ruleType: 'DIRECT_CLASS', targets: ['8'], level: 2 }),
+  sgRule({ code: 'SG_LEVEL3_VS_8', ruleType: 'DIRECT_CLASS', targets: ['8'], level: 3 }),
+  sgRule({ code: 'SG_LEVEL4_VS_8', ruleType: 'DIRECT_CLASS', targets: ['8'], level: 4 }),
+  sgRule({ code: 'SG_MALFORMED_DIRECT', ruleType: 'DIRECT_CLASS', targets: ['8'], level: null }),
+  sgRule({ code: 'SG_AS_FOR_2_2', ruleType: 'AS_FOR_CLASS', targets: ['2.2'] }),
 ]);
 
 let unSequence = 1000;
@@ -168,14 +175,50 @@ describe('evaluateSegregationPair — subsidiary risks', () => {
     expect(result.decision).toEqual({ status: 'SEGREGATION_REQUIRED', level: 4, reason: expect.any(String) });
   });
 
-  it('G. requires review when either side carries two or more subsidiary risks', () => {
+  it('G. takes the column 16b provisions, not the subsidiary axes, for two or more subsidiary risks', () => {
+    // Holder is class 2.2 with subsidiary 5.1 and 8. Enumerating those axes
+    // would reach 2.3 <-> 5.1 = 1 and 2.3 <-> 8 = 2; the applicable
+    // provisions are instead the ones its column 16b carries, here a
+    // DIRECT_CLASS rule at level 2 that does not target class 2.3.
+    const result = evaluate(
+      makeEntry({ primaryClass: '2.2', subsidiaryRisks: ['5.1', '8'], segregationCodes: ['SG_CLASS_2'] }),
+      makeEntry({ primaryClass: '2.3' }),
+    );
+
+    // 2.2 <-> 2.3 = 0, and no provision applies to a plain class 2.3 cargo.
+    expect(result.decision.status).toBe('CLEAR');
+    expect(result.reviewBlockers).toEqual([]);
+  });
+
+  it('G. still applies a column 16b provision carried alongside two or more subsidiary risks', () => {
+    const result = evaluate(
+      makeEntry({ primaryClass: '2.2', subsidiaryRisks: ['5.1', '8'], segregationCodes: ['SG_CLASS_2'] }),
+      makeEntry({ primaryClass: '8' }),
+    );
+
+    // 2.2 <-> 8 = 1 from the table, raised to 2 by the provision targeting class 8.
+    expect(result.decision).toEqual({ status: 'SEGREGATION_REQUIRED', level: 2, reason: expect.any(String) });
+  });
+
+  it('G. fails closed when two or more subsidiary risks come with no column 16b provision at all', () => {
     const result = evaluate(
       makeEntry({ primaryClass: '2.2', subsidiaryRisks: ['5.1', '8'] }),
       makeEntry({ primaryClass: '2.3' }),
     );
 
     expect(result.decision.status).toBe('REVIEW_REQUIRED');
-    expect(result.reviewBlockers).toContain('MULTIPLE_SUBSIDIARY_RISKS');
+    expect(result.reviewBlockers).toContain('MULTIPLE_SUBSIDIARY_RISKS_NO_PROVISION');
+  });
+
+  it('G. keeps the single-subsidiary axis, which is not governed by column 16b', () => {
+    // One subsidiary label, so its own provisions apply and take precedence
+    // where more stringent: 2.2 <-> 2.3 = 0 but 8 <-> 2.3 = 2.
+    const result = evaluate(
+      makeEntry({ primaryClass: '2.2', subsidiaryRisks: ['8'] }),
+      makeEntry({ primaryClass: '2.3' }),
+    );
+
+    expect(result.decision).toEqual({ status: 'SEGREGATION_REQUIRED', level: 2, reason: expect.any(String) });
   });
 
   it('H. requires review when a shared primary class plus a subsidiary axis creates the requirement', () => {
@@ -350,14 +393,51 @@ describe('evaluateSegregationPair — SG provisions', () => {
     expect(result.decision.level).toBe(4);
   });
 
-  it('M. never lets AS_FOR_CLASS lower a stronger base level', () => {
-    // Base 3 <-> 4.1 = 3, substituted 5.1 <-> 4.1 = 1.
+  it('M. substitutes the holder class rather than adding a second candidate level', () => {
+    // The holder's own row would give 3 <-> 4.1 = 3, but "segregation as for
+    // class 5.1" replaces that basis and 5.1 <-> 4.1 = 1. Keeping the holder's
+    // own row as well would hold the pair at 3 and over-segregate it.
     const result = evaluate(
       makeEntry({ primaryClass: '3', segregationCodes: ['SG_AS_FOR_5_1'] }),
       makeEntry({ primaryClass: '4.1' }),
     );
 
-    expect(result.decision.level).toBe(3);
+    expect(result.decision).toEqual({ status: 'SEGREGATION_REQUIRED', level: 1, reason: expect.any(String) });
+  });
+
+  it('M. lets the substituted basis fall to no requirement where the holder class had one', () => {
+    // 3 <-> 5.1 = 2 on the holder's own row; as for class 5.1 it is
+    // 5.1 <-> 5.1 = 0, and no provision targets the other cargo.
+    const result = evaluate(
+      makeEntry({ primaryClass: '3', segregationCodes: ['SG_AS_FOR_5_1'] }),
+      makeEntry({ primaryClass: '5.1' }),
+    );
+
+    expect(result.decision.status).toBe('CLEAR');
+    expect(result.reviewBlockers).toEqual([]);
+  });
+
+  it('M. still applies the holder\'s other column 16b provisions on top of the substituted basis', () => {
+    // Substituted basis 5.1 <-> 8 = 4 here, and the DIRECT_CLASS rule at
+    // level 2 targeting class 8 cannot lower it.
+    const result = evaluate(
+      makeEntry({ primaryClass: '3', segregationCodes: ['SG_AS_FOR_5_1', 'SG_CLASS_2'] }),
+      makeEntry({ primaryClass: '8' }),
+    );
+
+    expect(result.decision.level).toBe(4);
+  });
+
+  it('M. does not let a substitution change what another cargo\'s provision matches against', () => {
+    // The holder is class 3 segregating as for class 5.1. The other cargo's
+    // rule targets class 8, which the holder neither is nor is substituted
+    // to, so nothing matches and only the table applies: 5.1 <-> 4.1 = 1.
+    const result = evaluate(
+      makeEntry({ primaryClass: '3', segregationCodes: ['SG_AS_FOR_5_1'] }),
+      makeEntry({ primaryClass: '4.1', segregationCodes: ['SG_CLASS_2'] }),
+    );
+
+    expect(result.decision.level).toBe(1);
   });
 
   it('applies SG rules carried by the right-hand entry as well as the left', () => {
@@ -521,5 +601,153 @@ describe('evaluateSegregationPair — Class 1', () => {
     // string comparison.
     expect(result.decision).toEqual({ status: 'SEGREGATION_REQUIRED', level: 4, reason: expect.any(String) });
     expect(result.reviewBlockers).toEqual([]);
+  });
+});
+
+describe('evaluateSegregationPair — final semantics regression', () => {
+  it('5. raises a level-0 base to level 1 for an "away from" provision', () => {
+    // 3 <-> 3 = 0 (an "X" cell) with an away-from provision targeting the
+    // other cargo's class.
+    const result = evaluate(
+      makeEntry({ primaryClass: '8', segregationCodes: ['SG_AWAY_FROM_8'] }),
+      makeEntry({ primaryClass: '8' }),
+    );
+
+    expect(result.decision).toEqual({ status: 'SEGREGATION_REQUIRED', level: 1, reason: expect.any(String) });
+  });
+
+  it('6. raises a level-0 base to level 2 for a "separated from" provision', () => {
+    const result = evaluate(
+      makeEntry({ primaryClass: '8', segregationCodes: ['SG_SEPARATED_FROM_8'] }),
+      makeEntry({ primaryClass: '8' }),
+    );
+
+    expect(result.decision).toEqual({ status: 'SEGREGATION_REQUIRED', level: 2, reason: expect.any(String) });
+  });
+
+  it('12a. keeps the stronger table level when a provision imposes a weaker one', () => {
+    // Table 4.1 <-> 8 = 2, provision "away from class 8" = 1. The provision
+    // adds a requirement, it does not cap the table, so 2 stands.
+    const result = evaluate(
+      makeEntry({ primaryClass: '4.1', segregationCodes: ['SG_AWAY_FROM_8'] }),
+      makeEntry({ primaryClass: '8' }),
+    );
+
+    expect(result.decision.level).toBe(2);
+  });
+
+  it('12b. takes the provision level when it is stronger than the table', () => {
+    // Table 3 <-> 8 = 1, provision targeting class 8 = 3.
+    const result = evaluate(
+      makeEntry({ primaryClass: '3', segregationCodes: ['SG_LEVEL3_VS_8'] }),
+      makeEntry({ primaryClass: '8' }),
+    );
+
+    expect(result.decision.level).toBe(3);
+  });
+
+  it('12c. an "as for class" substitution lowers the basis where an ordinary provision could not', () => {
+    // The two directions are not symmetric by accident: an ordinary provision
+    // is cumulative with the table (12a), while "segregation as for class"
+    // replaces the holder's basis outright. Table 3 <-> 8 = 1, but as for
+    // class 2.2 it is 2.2 <-> 8 = 1 as well — so compare against class 5.1,
+    // where the holder's own row gives 2 and the substituted row gives 0.
+    const result = evaluate(
+      makeEntry({ primaryClass: '3', segregationCodes: ['SG_AS_FOR_2_2'] }),
+      makeEntry({ primaryClass: '5.1' }),
+    );
+
+    expect(result.decision.status).toBe('CLEAR');
+  });
+
+  it('13. reports level 1', () => {
+    const result = evaluate(
+      makeEntry({ primaryClass: '4.1' }),
+      makeEntry({ primaryClass: '5.1' }),
+    );
+
+    expect(result.decision).toEqual({ status: 'SEGREGATION_REQUIRED', level: 1, reason: expect.any(String) });
+  });
+
+  it('14. reports level 2', () => {
+    const result = evaluate(makeEntry({ primaryClass: '3' }), makeEntry({ primaryClass: '5.1' }));
+
+    expect(result.decision.level).toBe(2);
+  });
+
+  it('15. reports level 3', () => {
+    const result = evaluate(makeEntry({ primaryClass: '3' }), makeEntry({ primaryClass: '4.1' }));
+
+    expect(result.decision.level).toBe(3);
+  });
+
+  it('16. reports level 4', () => {
+    const result = evaluate(makeEntry({ primaryClass: '5.1' }), makeEntry({ primaryClass: '8' }));
+
+    expect(result.decision.level).toBe(4);
+  });
+
+  it('W. treats a subsidiary hazard of class 1 as the division 1.3 row', () => {
+    // The 1.3 1.6 row is not in the synthetic matrix, so the lookup fails
+    // closed on that label rather than on the 1.1 1.2 1.5 row the raw
+    // division would otherwise have produced.
+    const result = evaluate(
+      makeEntry({ primaryClass: '3', subsidiaryRisks: ['1.1'] }),
+      makeEntry({ primaryClass: '8' }),
+    );
+
+    expect(result.decision.status).toBe('REVIEW_REQUIRED');
+    expect(result.reviewBlockers).toContain('MISSING_CLASS_RULE:1.3 1.6|8');
+    expect(result.reviewBlockers).not.toContain('MISSING_CLASS_RULE:1.1 1.2 1.5|8');
+  });
+
+  it('X. declines an exemption instead of applying or reporting it', () => {
+    // An exemption this engine cannot verify must leave the ordinary
+    // requirement in force: no level change, no obligation shown to the
+    // operator, and no escalation to review.
+    const result = evaluate(
+      makeEntry({ primaryClass: '3', segregationCodes: ['SG_EXEMPTION'] }),
+      makeEntry({ primaryClass: '5.1' }),
+    );
+
+    expect(result.decision).toEqual({ status: 'SEGREGATION_REQUIRED', level: 2, reason: expect.any(String) });
+    expect(result.additionalRequirements).toEqual([]);
+    expect(result.reviewBlockers).toEqual([]);
+  });
+
+  it('Y. fails closed on an unresolved segregation source value without echoing it', () => {
+    const result = evaluate(
+      makeEntry({ primaryClass: '3', segregationCodes: ['UNRESOLVED_SOURCE:synthetic private wording'] }),
+      makeEntry({ primaryClass: '3' }),
+    );
+
+    expect(result.decision.status).toBe('REVIEW_REQUIRED');
+    expect(result.reviewBlockers).toEqual(['UNRESOLVED_SEGREGATION_SOURCE']);
+    expect(JSON.stringify(result)).not.toContain('synthetic private wording');
+  });
+
+  it('Z. fails closed on a stored DIRECT_CLASS rule with no level', () => {
+    const result = evaluate(
+      makeEntry({ primaryClass: '3', segregationCodes: ['SG_MALFORMED_DIRECT'] }),
+      makeEntry({ primaryClass: '8' }),
+    );
+
+    expect(result.decision.status).toBe('REVIEW_REQUIRED');
+    expect(result.reviewBlockers).toEqual(['MALFORMED_SG_RULE:SG_MALFORMED_DIRECT']);
+  });
+
+  it('T2. stays symmetric across a substitution and a multi-subsidiary side', () => {
+    const left = makeEntry({
+      primaryClass: '2.2',
+      subsidiaryRisks: ['5.1', '8'],
+      segregationCodes: ['SG_AS_FOR_5_1', 'SG_SEPARATED_FROM_8'],
+    });
+    const right = makeEntry({ primaryClass: '8', segregationGroups: ['SGG1'], segregationCodes: ['SG_SGG_2'] });
+
+    const forward = evaluate(left, right);
+    const reverse = evaluate(right, left);
+
+    expect(reverse.decision).toEqual(forward.decision);
+    expect(reverse.reviewBlockers).toEqual(forward.reviewBlockers);
   });
 });
