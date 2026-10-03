@@ -23,11 +23,12 @@ export type SgRuleType =
   /**
    * A provision that *removes* or disapplies segregation rather than
    * imposing it, under a condition this engine cannot verify. Failing closed
-   * means declining the relaxation: the rule contributes nothing, so the
-   * un-relaxed requirement stands. Deliberately not ADDITIONAL_REQUIREMENT
-   * (which would present a relaxation to the operator as an obligation) and
-   * deliberately not REVIEW_ONLY (escalating a provision that can only ever
-   * lower a requirement buys no safety and costs a determinable answer).
+   * means declining the relaxation and declining to publish the un-relaxed
+   * figure as a final answer: the rule raises a review blocker, so the pair
+   * resolves to REVIEW_REQUIRED. Deliberately not ADDITIONAL_REQUIREMENT,
+   * which would present a relaxation to the operator as an obligation, and
+   * kept distinct from REVIEW_ONLY so the cause of the review stays legible
+   * in the blocker list.
    */
   | 'EXEMPTION'
   /** Source conditions this engine cannot evaluate; forces manual review. */

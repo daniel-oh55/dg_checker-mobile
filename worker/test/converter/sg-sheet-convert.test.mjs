@@ -177,13 +177,62 @@ describe('parseSgRow — rule classification', () => {
     assert.equal(rule.level, null);
   });
 
-  it('classifies an exemption ahead of the obligation wording it also contains', () => {
+  it('sends a row holding both an obligation and exemption wording to REVIEW_ONLY', () => {
+    // Collapsing this row to EXEMPTION would silently discard the positive
+    // obligation; collapsing it to the obligation would assert a requirement
+    // the exemption may lift. REVIEW_ONLY drops neither.
     const rule = parseSgRow(
       'SG9031',
       'Shall not be stowed together with synthetic material; there is no need to apply the provisions on ' +
         'segregation of substances in that case.',
     );
+    assert.equal(rule.ruleType, 'REVIEW_ONLY');
+    assert.deepEqual(rule.targets, []);
+    assert.equal(rule.level, null);
+  });
+
+  it('sends a row holding a level term alongside exemption wording to REVIEW_ONLY', () => {
+    const rule = parseSgRow(
+      'SG9032',
+      'Stow “separated from” class 3; there is no need to apply the provisions on segregation ' +
+        'of substances within the synthetic assembly.',
+    );
+    assert.equal(rule.ruleType, 'REVIEW_ONLY');
+    assert.equal(rule.level, null);
+  });
+
+  it('sends a row holding a substituted class alongside exemption wording to REVIEW_ONLY', () => {
+    const rule = parseSgRow(
+      'SG9033',
+      'Segregation as for class 3, but there is no need to apply the provisions on segregation of ' +
+        'substances of the same synthetic group.',
+    );
+    assert.equal(rule.ruleType, 'REVIEW_ONLY');
+    assert.deepEqual(rule.targets, []);
+  });
+
+  it('keeps an exemption-only row as EXEMPTION rather than over-escalating it', () => {
+    const rule = parseSgRow(
+      'SG9034',
+      'There is no need to apply the provisions on segregation of substances within the synthetic assembly.',
+    );
     assert.equal(rule.ruleType, 'EXEMPTION');
+    assert.deepEqual(rule.targets, []);
+    assert.equal(rule.level, null);
+  });
+
+  it('leaves an ordinary affirmative row as a DIRECT_* rule', () => {
+    // The compound detector must not disturb rows with no exemption wording.
+    const direct = parseSgRow('SG9035', 'Stow “away from” class 8.');
+    assert.equal(direct.ruleType, 'DIRECT_CLASS');
+    assert.deepEqual(direct.targets, ['8']);
+    assert.equal(direct.level, 1);
+  });
+
+  it('leaves an ordinary conditional non-exemption row as REVIEW_ONLY', () => {
+    const rule = parseSgRow('SG9036', 'Stow “away from” class 8, except when containing synthetic filler.');
+    assert.equal(rule.ruleType, 'REVIEW_ONLY');
+    assert.equal(rule.level, null);
   });
 
   it('classifies a "[Reserved]" row as RESERVED', () => {

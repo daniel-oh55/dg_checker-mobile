@@ -79,10 +79,17 @@ export const REVIEW_BLOCKER = {
   unresolvedSegregation: 'UNRESOLVED_SEGREGATION_SOURCE',
   /**
    * Two or more subsidiary hazard labels, where the entry carries no column
-   * 16b provision at all. The provisions for such goods are the ones given in
-   * column 16b, so an entry with none leaves the requirement unspecified.
+   * 16b provision this engine can mechanically evaluate. The provisions for
+   * such goods are the ones given in column 16b, so an entry whose column 16b
+   * yields nothing evaluable leaves the requirement unspecified.
    */
   multipleSubsidiaryNoProvision: 'MULTIPLE_SUBSIDIARY_RISKS_NO_PROVISION',
+  /**
+   * A provision that relaxes segregation under a condition this engine cannot
+   * verify. The relaxation is not granted, and the un-relaxed requirement is
+   * not presented as a final answer either: the pair goes to review.
+   */
+  exemptionRequiresReview: 'EXEMPTION_REQUIRES_REVIEW',
   sameClassSubsidiary: 'SAME_CLASS_SUBSIDIARY_REVIEW',
   class1ToClass1: 'CLASS1_TO_CLASS1_UNRESOLVED',
 } as const;
@@ -145,6 +152,25 @@ function normalizeEntry(entry: DgEntry): NormalizedEntry {
 }
 
 /**
+ * The hazard class(es) an entry presents to the segregation table, and
+ * whether an "as for class" provision put them there in place of its own
+ * primary hazard class.
+ */
+interface TableBasis {
+  readonly labels: readonly string[];
+  readonly substituted: boolean;
+}
+
+/**
+ * One segregation-table axis an entry contributes, carrying just enough
+ * provenance to answer "did subsidiary-hazard treatment introduce this?".
+ */
+interface HazardAxis {
+  readonly label: string;
+  readonly subsidiaryDriven: boolean;
+}
+
+/**
  * The hazard classes this entry is "deemed to include" when another cargo's
  * SG provision names a class.
  *
@@ -179,12 +205,25 @@ function maxLevel(a: SegregationLevel, b: SegregationLevel): SegregationLevel {
  */
 interface Accumulator {
   level: SegregationLevel;
+  /**
+   * The highest contribution that exists only because of subsidiary-hazard
+   * treatment — a subsidiary table axis, or the column 16b provisions that
+   * stand in for those axes on a two-or-more-subsidiary entry. Kept beside
+   * `level` so the same-primary-class exception (step 8) can tell "this
+   * requirement comes from a subsidiary hazard" from "this requirement is a
+   * DGL-specific provision unrelated to subsidiary handling", which is
+   * exactly the distinction 7.2.6.1 turns on.
+   */
+  subsidiaryDrivenLevel: SegregationLevel;
   readonly blockers: string[];
   readonly additionalRequirements: AdditionalRequirement[];
 }
 
-function contribute(acc: Accumulator, level: SegregationLevel): void {
+function contribute(acc: Accumulator, level: SegregationLevel, subsidiaryDriven = false): void {
   acc.level = maxLevel(acc.level, level);
+  if (subsidiaryDriven) {
+    acc.subsidiaryDrivenLevel = maxLevel(acc.subsidiaryDrivenLevel, level);
+  }
 }
 
 function addBlocker(acc: Accumulator, blocker: string): void {
@@ -262,7 +301,7 @@ function resolveSgRules(acc: Accumulator, normalized: NormalizedEntry, sgRules: 
  * Several substitutions on one entry are unioned; the strictest result across
  * them governs.
  */
-function tableBasisLabels(normalized: NormalizedEntry, rules: readonly SgRule[]): string[] {
+function tableBasisLabels(normalized: NormalizedEntry, rules: readonly SgRule[]): TableBasis {
   const substituted: string[] = [];
   for (const rule of rules) {
     if (rule.ruleType !== 'AS_FOR_CLASS') continue;
@@ -273,11 +312,38 @@ function tableBasisLabels(normalized: NormalizedEntry, rules: readonly SgRule[])
     }
   }
 
-  return substituted.length > 0 ? substituted : [normalized.primaryLabel];
+  return substituted.length > 0
+    ? { labels: substituted, substituted: true }
+    : { labels: [normalized.primaryLabel], substituted: false };
 }
 
 /**
- * The full set of labels this entry contributes to segregation-table lookups:
+ * Whether a resolved provision can actually establish or evaluate a
+ * segregation requirement, as opposed to merely accompanying one.
+ *
+ * DIRECT_* produce a level against a matchable target, and AS_FOR_CLASS
+ * establishes a table basis — those four can yield a determinable result.
+ * ADDITIONAL_REQUIREMENT, EXEMPTION, REVIEW_ONLY and RESERVED cannot: the
+ * first is a non-level obligation carried alongside a requirement, and the
+ * other three are precisely the cases this engine refuses to resolve. A
+ * DIRECT_* row missing its level or targets is malformed and counts as
+ * nothing here, so a broken row can never stand in for a real provision.
+ */
+function isMechanicallyEvaluable(rule: SgRule): boolean {
+  switch (rule.ruleType) {
+    case 'DIRECT_CLASS':
+    case 'DIRECT_SGG':
+    case 'DIRECT_UN':
+      return rule.level !== null && rule.targets.length > 0;
+    case 'AS_FOR_CLASS':
+      return rule.targets.length > 0;
+    default:
+      return false;
+  }
+}
+
+/**
+ * The full set of axes this entry contributes to segregation-table lookups:
  * its table basis, plus a subsidiary-hazard axis where one applies.
  *
  * - Exactly one subsidiary hazard label — its provisions apply and take
@@ -286,32 +352,59 @@ function tableBasisLabels(normalized: NormalizedEntry, rules: readonly SgRule[])
  *   class 1 contributes the provisions for division 1.3.
  * - Two or more subsidiary hazard labels — the applicable provisions are the
  *   ones given in column 16b, so the individual subsidiary axes are *not*
- *   enumerated against the table. An entry in this shape that carries no
- *   column 16b provision at all leaves the requirement unspecified, so it
- *   fails closed instead of silently resolving to its primary class alone.
+ *   enumerated against the table. Completeness is judged on the *resolved*
+ *   rules rather than on how many source tokens column 16b happened to hold:
+ *   the entry needs at least one provision that can actually establish or
+ *   evaluate a requirement (see {@link isMechanicallyEvaluable}). An entry
+ *   whose column 16b carries only an ADDITIONAL_REQUIREMENT, only provisions
+ *   this engine refuses to resolve, or nothing at all leaves the requirement
+ *   unspecified and fails closed instead of silently resolving to its primary
+ *   class alone. Codes that are themselves unresolvable — EXEMPTION,
+ *   REVIEW_ONLY, RESERVED, an unknown code, an unresolved source token — also
+ *   raise their own blockers elsewhere; this check is about whether anything
+ *   is left that could have produced an answer.
  *
  * Returns null when the entry fails closed.
  */
-function tableHazardLabels(acc: Accumulator, normalized: NormalizedEntry, basis: readonly string[]): string[] | null {
-  const labels = [...basis];
+function tableHazardAxes(
+  acc: Accumulator,
+  normalized: NormalizedEntry,
+  basis: TableBasis,
+  rules: readonly SgRule[],
+): HazardAxis[] | null {
   const subsidiaries = normalized.subsidiaryLabels;
+  const multipleSubsidiaries = subsidiaries.length > 1;
 
-  if (subsidiaries.length > 1) {
-    if (normalized.entry.segregationCodes.length === 0) {
+  // A substituted basis counts as subsidiary-driven only where column 16b is
+  // itself the subsidiary-hazard treatment, i.e. on a 2+-subsidiary entry.
+  // On an entry with one subsidiary label or none, "segregation as for class"
+  // is an ordinary DGL-specific provision and nothing to do with subsidiary
+  // handling, while the single subsidiary axis below is tracked on its own.
+  const basisSubsidiaryDriven = multipleSubsidiaries && basis.substituted;
+  const axes: HazardAxis[] = basis.labels.map((label) => ({
+    label,
+    subsidiaryDriven: basisSubsidiaryDriven,
+  }));
+
+  if (multipleSubsidiaries) {
+    if (!rules.some(isMechanicallyEvaluable)) {
       addBlocker(acc, REVIEW_BLOCKER.multipleSubsidiaryNoProvision);
       return null;
     }
-    return labels;
+    return axes;
   }
 
   for (const subsidiary of subsidiaries) {
-    const axis = isClass1(subsidiary) ? CLASS1_SUBSIDIARY_AXIS : subsidiary;
-    if (!labels.includes(axis)) {
-      labels.push(axis);
+    const label = isClass1(subsidiary) ? CLASS1_SUBSIDIARY_AXIS : subsidiary;
+    // A subsidiary label the basis already carries introduces nothing: the
+    // entry's own basis row imposes that requirement anyway, so the axis is
+    // not recorded a second time as a subsidiary-driven one.
+    if (!axes.some((axis) => axis.label === label)) {
+      axes.push({ label, subsidiaryDriven: true });
     }
   }
 
-  return labels;
+  return axes;
 }
 
 /**
@@ -320,8 +413,20 @@ function tableHazardLabels(acc: Accumulator, normalized: NormalizedEntry, basis:
  * AS_FOR_CLASS is absent here on purpose: it is not an additional provision
  * applied against the other cargo but a substitution of the holder's own
  * table basis, handled by {@link tableBasisLabels} before any lookup happens.
+ *
+ * `subsidiaryDriven` says whether this holder's column 16b provisions *are*
+ * its subsidiary-hazard treatment — true exactly when the holder carries two
+ * or more subsidiary hazard labels, where column 16b supplies the requirement
+ * the individual subsidiary axes would otherwise have been enumerated for.
+ * On every other entry a provision is an ordinary DGL-specific one and is not
+ * attributed to subsidiary handling.
  */
-function applySgRule(acc: Accumulator, rule: SgRule, other: NormalizedEntry): void {
+function applySgRule(
+  acc: Accumulator,
+  rule: SgRule,
+  other: NormalizedEntry,
+  subsidiaryDriven: boolean,
+): void {
   switch (rule.ruleType) {
     case 'AS_FOR_CLASS':
       return;
@@ -336,10 +441,17 @@ function applySgRule(acc: Accumulator, rule: SgRule, other: NormalizedEntry): vo
       return;
 
     case 'EXEMPTION':
-      // A relaxation this engine cannot verify. Failing closed means simply
-      // not granting it: the un-relaxed requirement stands, and the provision
-      // is neither applied, reported as an obligation, nor escalated to
-      // review. It stays in the dataset so the source row is still auditable.
+      // A relaxation whose condition this engine cannot verify. Failing
+      // closed means declining the relaxation *and* declining to publish the
+      // un-relaxed figure as a final answer: the condition may well hold, in
+      // which case the strict number would be wrong in the other direction.
+      // So the provision is not applied, the level is not lowered, it is not
+      // reported to the operator as an obligation to satisfy, and the pair
+      // goes to review. The un-relaxed level keeps accumulating internally;
+      // the blocker simply dominates the public decision. The row stays in
+      // the dataset so the source provision remains auditable, and the
+      // blocker carries no payload so no source wording escapes.
+      addBlocker(acc, REVIEW_BLOCKER.exemptionRequiresReview);
       return;
 
     case 'ADDITIONAL_REQUIREMENT':
@@ -353,7 +465,7 @@ function applySgRule(acc: Accumulator, rule: SgRule, other: NormalizedEntry): vo
       }
       for (const label of matchableHazardLabels(other)) {
         if (rule.targets.includes(label)) {
-          contribute(acc, rule.level);
+          contribute(acc, rule.level, subsidiaryDriven);
         }
       }
       return;
@@ -365,7 +477,7 @@ function applySgRule(acc: Accumulator, rule: SgRule, other: NormalizedEntry): vo
         return;
       }
       if (other.entry.segregationGroups.some((group) => rule.targets.includes(group))) {
-        contribute(acc, rule.level);
+        contribute(acc, rule.level, subsidiaryDriven);
       }
       return;
     }
@@ -376,7 +488,7 @@ function applySgRule(acc: Accumulator, rule: SgRule, other: NormalizedEntry): vo
         return;
       }
       if (rule.targets.includes(other.entry.unNumber)) {
-        contribute(acc, rule.level);
+        contribute(acc, rule.level, subsidiaryDriven);
       }
       return;
     }
@@ -444,7 +556,7 @@ export function evaluateSegregationPair(
   const a = normalizeEntry(left);
   const b = normalizeEntry(right);
 
-  const acc: Accumulator = { level: 0, blockers: [], additionalRequirements: [] };
+  const acc: Accumulator = { level: 0, subsidiaryDrivenLevel: 0, blockers: [], additionalRequirements: [] };
 
   // Step 2 — unresolved source content must never be dropped.
   if (a.unresolvedSubsidiaryTokens.length > 0 || b.unresolvedSubsidiaryTokens.length > 0) {
@@ -461,46 +573,55 @@ export function evaluateSegregationPair(
   // Steps 4-5 — each side's segregation-table axes.
   const basisA = tableBasisLabels(a, rulesA);
   const basisB = tableBasisLabels(b, rulesB);
-  const hazardsA = tableHazardLabels(acc, a, basisA);
-  const hazardsB = tableHazardLabels(acc, b, basisB);
+  const hazardsA = tableHazardAxes(acc, a, basisA, rulesA);
+  const hazardsB = tableHazardAxes(acc, b, basisB, rulesB);
 
   // Step 6 — the table across every applicable axis pair. `primaryOnlyLevel`
   // is kept separately for step 8: it is the requirement the two primary
   // hazard classes impose on their own, with no subsidiary axis and no
   // substitution, which is the basis the same-class exception is judged on.
   const primaryOnlyLevel = lookupAxis(acc, classRules, a.primaryLabel, b.primaryLabel);
-  let tableLevel: SegregationLevel = 0;
   if (hazardsA !== null && hazardsB !== null) {
-    for (const labelA of hazardsA) {
-      for (const labelB of hazardsB) {
-        const level = lookupAxis(acc, classRules, labelA, labelB);
+    for (const axisA of hazardsA) {
+      for (const axisB of hazardsB) {
+        const level = lookupAxis(acc, classRules, axisA.label, axisB.label);
         if (level !== null) {
-          tableLevel = maxLevel(tableLevel, level);
+          contribute(acc, level, axisA.subsidiaryDriven || axisB.subsidiaryDriven);
         }
       }
     }
   }
-  contribute(acc, tableLevel);
 
   // Step 7 — column 16b provisions in both directions. A provision on either
-  // entry applies, and the strictest applicable requirement governs.
+  // entry applies, and the strictest applicable requirement governs. Where
+  // the holder carries two or more subsidiary hazard labels its provisions
+  // *are* the subsidiary-hazard treatment, so what they contribute is
+  // recorded as subsidiary-driven for step 8.
+  const multiSubsidiaryA = a.subsidiaryLabels.length > 1;
+  const multiSubsidiaryB = b.subsidiaryLabels.length > 1;
   for (const rule of rulesA) {
-    applySgRule(acc, rule, b);
+    applySgRule(acc, rule, b, multiSubsidiaryA);
   }
   for (const rule of rulesB) {
-    applySgRule(acc, rule, a);
+    applySgRule(acc, rule, a, multiSubsidiaryB);
   }
 
   // Step 8 — substances of the same class may be stowed together without
   // regard to segregation required by their subsidiary hazard label(s),
   // provided they do not react dangerously with each other. "Same class" is
   // judged on the Dangerous Goods List primary hazard class, so a pair that
-  // shares one and whose table requirement exceeds what those primary classes
-  // impose on their own is sitting exactly on that exception. The dataset
-  // carries no dangerous-reaction detail, so fail to review rather than
-  // asserting either the raised level or CLEAR.
+  // shares one and whose requirement exceeds what those primary classes
+  // impose on their own *because of subsidiary-hazard treatment* is sitting
+  // exactly on that exception. The dataset carries no dangerous-reaction
+  // detail, so fail to review rather than asserting either the raised level
+  // or CLEAR.
+  //
+  // The test is the subsidiary-driven contribution, not the overall level: a
+  // DGL-specific provision on same-class goods that has nothing to do with
+  // subsidiary handling raises a requirement the exception never reaches, and
+  // must still produce its number rather than a review.
   const samePrimaryClass = left.primaryClass === right.primaryClass;
-  if (samePrimaryClass && tableLevel > (primaryOnlyLevel ?? 0)) {
+  if (samePrimaryClass && acc.subsidiaryDrivenLevel > (primaryOnlyLevel ?? 0)) {
     addBlocker(acc, REVIEW_BLOCKER.sameClassSubsidiary);
   }
 

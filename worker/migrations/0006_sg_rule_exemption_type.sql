@@ -4,8 +4,9 @@
 -- a condition this application cannot verify. Such a row was previously
 -- classified ADDITIONAL_REQUIREMENT, which presented a relaxation to the
 -- operator as an outstanding obligation. EXEMPTION keeps the source row
--- auditable while contributing nothing at runtime, so the un-relaxed
--- requirement stands — failing closed is declining the relaxation.
+-- auditable and distinguishable: at runtime the relaxation is declined and
+-- the pair is routed to REVIEW_REQUIRED, because the un-relaxed figure is no
+-- safer to publish as a final answer than the relaxation would be to apply.
 --
 -- SQLite cannot widen a CHECK constraint in place, so the table is rebuilt.
 -- It holds ~80 rows and is fully repopulated by every dataset import, so the
