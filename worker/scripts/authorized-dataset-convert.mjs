@@ -450,7 +450,43 @@ const ADDITIONAL_REQUIREMENT_PATTERNS = [
   /^segregation from foodstuffs as in/i,
   /^shall not be stowed together with/i,
   /odour-absorbing cargoes/i,
-  /there is no need to apply the provisions on segregation/i,
+];
+
+/**
+ * Wording that *disapplies* segregation rather than imposing it, under a
+ * condition this converter cannot prove from two DG records.
+ *
+ * Checked before the condition patterns below so a relaxation is never
+ * routed to ADDITIONAL_REQUIREMENT, which would tell the operator that a
+ * relaxation is an outstanding obligation. EXEMPTION is not a way out of
+ * review — the runtime fails an exempted pair to review — it is a way of
+ * recording *why* review is needed without misreporting the provision.
+ */
+const EXEMPTION_PATTERNS = [/there is no need to apply the provisions on segregation/i];
+
+/**
+ * Wording that carries an affirmative, independently operative segregation
+ * obligation: a level term, a substituted-class directive, or one of the
+ * non-level obligations above. Matched unanchored on purpose — in a compound
+ * row the obligation can sit either side of the exemption wording, so the
+ * anchored ADDITIONAL_REQUIREMENT forms are restated here without their
+ * leading `^`.
+ *
+ * Used only to detect a compound row. A row holding exemption wording *and*
+ * an affirmative obligation cannot be reduced to either half without losing
+ * one of them: classifying it EXEMPTION silently discards a positive
+ * requirement, and classifying it by the obligation alone asserts a
+ * requirement the exemption may lift. Such a row goes to REVIEW_ONLY, which
+ * is the one classification that drops nothing. This is deliberately a
+ * detector and not a multi-clause rule engine — the converter still produces
+ * exactly one rule per source row.
+ */
+const AFFIRMATIVE_OBLIGATION_PATTERNS = [
+  /\bin addition\b/i,
+  /\bsegregation from foodstuffs as in\b/i,
+  /\bshall not be stowed together with\b/i,
+  /odour-absorbing cargoes/i,
+  /\bsegregation as for\b/i,
 ];
 
 /**
@@ -539,21 +575,39 @@ function matchLevelPhrase(plainText) {
 }
 
 /**
+ * Whether the row states an affirmative segregation obligation of its own —
+ * a level term, a substituted-class directive, or a non-level obligation.
+ * Only consulted for compound detection; the ordinary classification path
+ * below still decides which single rule a non-compound row becomes.
+ */
+export function hasAffirmativeObligation(plainText) {
+  if (matchLevelPhrase(plainText) !== null) return true;
+  return AFFIRMATIVE_OBLIGATION_PATTERNS.some((pattern) => pattern.test(plainText));
+}
+
+/**
  * Converts one authorized SG row into exactly one canonical sgRules entry.
  *
  * Classification order matters and is deliberate:
- *   1. "[Reserved]"                -> RESERVED
- *   2. non-level obligation wording -> ADDITIONAL_REQUIREMENT
- *   3. condition/exception wording  -> REVIEW_ONLY
- *   4. "Segregation as for ..."     -> AS_FOR_CLASS (or REVIEW_ONLY if the
+ *   1. "[Reserved]"                 -> RESERVED
+ *   2. segregation-disapplying wording -> EXEMPTION, or REVIEW_ONLY when the
+ *                                      same row also states an affirmative
+ *                                      obligation (a compound row)
+ *   3. non-level obligation wording -> ADDITIONAL_REQUIREMENT
+ *   4. condition/exception wording  -> REVIEW_ONLY
+ *   5. "Segregation as for ..."     -> AS_FOR_CLASS (or REVIEW_ONLY if the
  *                                      substituted class has no matrix row)
- *   5. level wording + target       -> DIRECT_SGG / DIRECT_UN / DIRECT_CLASS
+ *   6. level wording + target       -> DIRECT_SGG / DIRECT_UN / DIRECT_CLASS
  *                                      (or REVIEW_ONLY for a prose target)
- *   6. anything else                -> hard failure
+ *   7. anything else                -> hard failure
  *
- * Step 3 runs before steps 4-5 so a conditional rule can never be reduced to
- * its unconditional-looking core, and step 6 means unrecognized wording stops
- * the conversion instead of quietly vanishing.
+ * Step 2 runs before step 3 so a provision that removes segregation is never
+ * reported as an obligation to satisfy — but it can no longer swallow one
+ * either: a row carrying both is sent to review rather than classified by
+ * whichever wording the converter happened to test first. Step 4 runs before
+ * steps 5-6 so a conditional rule can never be reduced to its
+ * unconditional-looking core, and step 7 means unrecognized wording stops the
+ * conversion instead of quietly vanishing.
  */
 export function parseSgRow(code, rawDescription) {
   const sourceText = normalizeSgSourceText(rawDescription);
@@ -570,6 +624,14 @@ export function parseSgRow(code, rawDescription) {
   // Quote characters carry no meaning for matching, and the level phrases are
   // quoted in the source ("away from"), so compare against a quote-free copy.
   const plain = sourceText.replace(/["']/g, '').trim();
+
+  if (EXEMPTION_PATTERNS.some((pattern) => pattern.test(plain))) {
+    // A compound row — exemption wording alongside an affirmative obligation
+    // — must not collapse to either half. REVIEW_ONLY keeps both in play.
+    return hasAffirmativeObligation(plain)
+      ? reviewOnly
+      : { code, ruleType: 'EXEMPTION', targets: [], level: null, sourceText };
+  }
 
   if (ADDITIONAL_REQUIREMENT_PATTERNS.some((pattern) => pattern.test(plain))) {
     return { code, ruleType: 'ADDITIONAL_REQUIREMENT', targets: [], level: null, sourceText };

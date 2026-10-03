@@ -71,6 +71,7 @@ describe('validateDataset — valid data', () => {
         DIRECT_UN: 0,
         AS_FOR_CLASS: 1,
         ADDITIONAL_REQUIREMENT: 1,
+        EXEMPTION: 0,
         REVIEW_ONLY: 1,
         RESERVED: 1,
       },

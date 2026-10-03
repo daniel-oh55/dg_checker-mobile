@@ -1,5 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native';
 import type { SegregationBatchSummary } from '../api/segregation';
+import { segregationLevelLabel } from '../ui/segregation-levels';
 import {
   summaryHeadline,
   summaryMetricAccents,
@@ -73,7 +74,7 @@ export function BatchResultSummary({ summary }: BatchResultSummaryProps) {
             <View style={styles.framingDivider} />
             <View style={styles.framingCell}>
               <Text style={[styles.framingValue, { color: palette.brandBlue }]}>
-                Level {summary.maxRequiredLevel}
+                {segregationLevelLabel(summary.maxRequiredLevel, 'en')}
               </Text>
               <Text style={styles.framingLabelKo}>{summaryMetricLabels.highestLevel.ko}</Text>
               <Text style={styles.framingLabelEn}>{summaryMetricLabels.highestLevel.en}</Text>

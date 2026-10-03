@@ -5,6 +5,7 @@ import {
   additionalTone,
   pairStatusText,
   pairStatusTone,
+  reviewRequiredDetail,
   variantResolutionNote,
 } from '../ui/segregation-presentation';
 import { palette, radius, spacing, typography } from '../ui/theme';
@@ -30,6 +31,13 @@ export function PairResultCard({ pair }: PairResultCardProps) {
       </View>
 
       <StatusPanel tone={tone} ko={statusText.ko} en={statusText.en} />
+
+      {status === 'REVIEW_REQUIRED' && (
+        <View style={styles.reviewDetail}>
+          <Text style={styles.reviewDetailKo}>{reviewRequiredDetail.ko}</Text>
+          <Text style={styles.reviewDetailEn}>{reviewRequiredDetail.en}</Text>
+        </View>
+      )}
 
       {pair.variantResolution === 'STRICTEST_OF_MULTIPLE_VARIANTS' && (
         <Text style={styles.variantNote}>
@@ -72,6 +80,20 @@ const styles = StyleSheet.create({
   pairGlyph: {
     fontSize: 15,
     color: palette.textTertiary,
+  },
+  reviewDetail: {
+    marginTop: spacing.sm + 2,
+  },
+  reviewDetailKo: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: palette.textSecondary,
+  },
+  reviewDetailEn: {
+    ...typography.captionEn,
+    color: palette.textTertiary,
+    lineHeight: 16,
+    marginTop: 1,
   },
   variantNote: {
     ...typography.captionEn,

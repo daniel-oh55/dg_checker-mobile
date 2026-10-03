@@ -10,6 +10,7 @@ export interface Bilingual {
   en: string;
 }
 
+import { segregationLevelLabel } from './segregation-levels';
 import { palette } from './theme';
 
 export { palette };
@@ -74,14 +75,30 @@ export function validateActiveInputs(values: string[]): Bilingual | null {
   return null;
 }
 
+/**
+ * The one phrase for a REVIEW_REQUIRED pair.
+ *
+ * "Manual review" said nothing about why, and read as though the operator had
+ * skipped a step. The result actually means the automated check ran and could
+ * not finish this pair from the rules it models, so the wording says that and
+ * {@link reviewRequiredDetail} says it in full. Neither exposes the internal
+ * blocker code, which is diagnostic data derived from the private source.
+ */
+export const reviewRequiredText: Bilingual = { ko: '추가 확인 필요', en: 'Further review required' };
+
+export const reviewRequiredDetail: Bilingual = {
+  ko: '현재 자동 판정 범위를 넘어서는 조건이 있어 추가 확인이 필요합니다.',
+  en: 'Additional review is required for conditions not fully resolved by the automated check.',
+};
+
 export function pairStatusText(status: DecisionStatus, level: number | null): Bilingual {
   switch (status) {
     case 'REVIEW_REQUIRED':
-      return { ko: '수동 검토 필요', en: 'Manual review required' };
+      return reviewRequiredText;
     case 'SEGREGATION_REQUIRED':
       return {
-        ko: `격리 필요 · Level ${level ?? '-'}`,
-        en: 'Segregation required',
+        ko: level === null ? '격리 필요' : `격리 필요 · ${segregationLevelLabel(level, 'ko')}`,
+        en: level === null ? 'Segregation required' : `Segregation required · ${segregationLevelLabel(level, 'en')}`,
       };
     case 'CLEAR':
       return {
@@ -201,7 +218,7 @@ export function pairStatusTone(status: DecisionStatus): StatusTone {
 
 export function summaryHeadline(summary: SegregationBatchSummary): Bilingual {
   if (summary.reviewRequiredPairs > 0) {
-    return { ko: '수동 검토가 필요한 조합이 있습니다.', en: 'Some pairs require manual review.' };
+    return { ko: '추가 확인이 필요한 조합이 있습니다.', en: 'Some pairs require further review.' };
   }
   if (summary.segregationRequiredPairs > 0) {
     return { ko: '격리가 필요한 조합이 있습니다.', en: 'Some pairs require segregation.' };
@@ -218,7 +235,7 @@ export function summaryHeadline(summary: SegregationBatchSummary): Bilingual {
 export const summaryMetricLabels = {
   totalPairs: { ko: '전체 조합', en: 'Total pairs' } satisfies Bilingual,
   segregationRequired: { ko: '격리 필요', en: 'Segregation' } satisfies Bilingual,
-  reviewRequired: { ko: '수동 검토', en: 'Review' } satisfies Bilingual,
+  reviewRequired: { ko: '추가 확인', en: 'Review' } satisfies Bilingual,
   levelZero: { ko: '격리 수준 없음', en: 'Level 0' } satisfies Bilingual,
   additionalRequirement: { ko: '추가 조건', en: 'Additional' } satisfies Bilingual,
   highestLevel: { ko: '조합 중 최고 Level', en: 'Highest pair level' } satisfies Bilingual,
@@ -327,7 +344,7 @@ export const multipleProfilesText: Bilingual = {
 };
 
 export const operationalNote: Bilingual = {
-  ko: '수동 검토 또는 추가 조건이 표시된 조합은 적재 전 반드시 확인하세요. 본 도구는 참고용이며 최종 위험물 승인을 대체하지 않습니다.',
+  ko: '추가 확인 또는 추가 조건이 표시된 조합은 적재 전 반드시 확인하세요. 본 도구는 참고용이며 최종 위험물 승인을 대체하지 않습니다.',
   en: 'Review flagged pairs and additional requirements before stowage. This is a reference tool, not final dangerous-goods approval.',
 };
 
