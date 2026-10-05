@@ -163,11 +163,18 @@ interface TableBasis {
 
 /**
  * One segregation-table axis an entry contributes, carrying just enough
- * provenance to answer "did subsidiary-hazard treatment introduce this?".
+ * provenance to answer "is this an axis the same-primary-class exception of
+ * 7.2.6.1 reaches?".
+ *
+ * Two things put an axis in that category: subsidiary-hazard treatment (a
+ * subsidiary axis, or the column 16b provisions that stand in for those axes
+ * on a two-or-more-subsidiary entry), and an "as for class" substitution,
+ * which 7.2.6.2 keeps out of the same-class reading by directing that
+ * interpretation back to the Dangerous Goods List primary hazard class.
  */
 interface HazardAxis {
   readonly label: string;
-  readonly subsidiaryDriven: boolean;
+  readonly sameClassExceptionRelevant: boolean;
 }
 
 /**
@@ -206,23 +213,24 @@ function maxLevel(a: SegregationLevel, b: SegregationLevel): SegregationLevel {
 interface Accumulator {
   level: SegregationLevel;
   /**
-   * The highest contribution that exists only because of subsidiary-hazard
-   * treatment — a subsidiary table axis, or the column 16b provisions that
-   * stand in for those axes on a two-or-more-subsidiary entry. Kept beside
-   * `level` so the same-primary-class exception (step 8) can tell "this
-   * requirement comes from a subsidiary hazard" from "this requirement is a
-   * DGL-specific provision unrelated to subsidiary handling", which is
+   * The highest contribution that exists only because of a treatment the
+   * same-primary-class exception of 7.2.6.1 reaches — a subsidiary table
+   * axis, the column 16b provisions that stand in for those axes on a
+   * two-or-more-subsidiary entry, or an "as for class" substituted basis.
+   * Kept beside `level` so step 8 can tell "this requirement would not exist
+   * on the two primary hazard classes alone" from "this requirement is an
+   * ordinary DGL-specific provision the exception never reaches", which is
    * exactly the distinction 7.2.6.1 turns on.
    */
-  subsidiaryDrivenLevel: SegregationLevel;
+  sameClassExceptionLevel: SegregationLevel;
   readonly blockers: string[];
   readonly additionalRequirements: AdditionalRequirement[];
 }
 
-function contribute(acc: Accumulator, level: SegregationLevel, subsidiaryDriven = false): void {
+function contribute(acc: Accumulator, level: SegregationLevel, sameClassExceptionRelevant = false): void {
   acc.level = maxLevel(acc.level, level);
-  if (subsidiaryDriven) {
-    acc.subsidiaryDrivenLevel = maxLevel(acc.subsidiaryDrivenLevel, level);
+  if (sameClassExceptionRelevant) {
+    acc.sameClassExceptionLevel = maxLevel(acc.sameClassExceptionLevel, level);
   }
 }
 
@@ -375,15 +383,16 @@ function tableHazardAxes(
   const subsidiaries = normalized.subsidiaryLabels;
   const multipleSubsidiaries = subsidiaries.length > 1;
 
-  // A substituted basis counts as subsidiary-driven only where column 16b is
-  // itself the subsidiary-hazard treatment, i.e. on a 2+-subsidiary entry.
-  // On an entry with one subsidiary label or none, "segregation as for class"
-  // is an ordinary DGL-specific provision and nothing to do with subsidiary
-  // handling, while the single subsidiary axis below is tracked on its own.
-  const basisSubsidiaryDriven = multipleSubsidiaries && basis.substituted;
+  // A substituted basis is relevant to the same-primary-class exception
+  // whatever the subsidiary-risk count. "Segregation as for class X" governs
+  // the ordinary table lookup, but 7.2.6.2 directs that the same-class
+  // permission of 7.2.6.1 be read against the primary hazard class the
+  // Dangerous Goods List gives instead. So where a substitution raises the
+  // requirement between goods that share an actual primary class, the raise
+  // is one the exception reaches and the engine cannot finalize it.
   const axes: HazardAxis[] = basis.labels.map((label) => ({
     label,
-    subsidiaryDriven: basisSubsidiaryDriven,
+    sameClassExceptionRelevant: basis.substituted,
   }));
 
   if (multipleSubsidiaries) {
@@ -400,7 +409,7 @@ function tableHazardAxes(
     // entry's own basis row imposes that requirement anyway, so the axis is
     // not recorded a second time as a subsidiary-driven one.
     if (!axes.some((axis) => axis.label === label)) {
-      axes.push({ label, subsidiaryDriven: true });
+      axes.push({ label, sameClassExceptionRelevant: true });
     }
   }
 
@@ -414,18 +423,20 @@ function tableHazardAxes(
  * applied against the other cargo but a substitution of the holder's own
  * table basis, handled by {@link tableBasisLabels} before any lookup happens.
  *
- * `subsidiaryDriven` says whether this holder's column 16b provisions *are*
- * its subsidiary-hazard treatment — true exactly when the holder carries two
- * or more subsidiary hazard labels, where column 16b supplies the requirement
- * the individual subsidiary axes would otherwise have been enumerated for.
- * On every other entry a provision is an ordinary DGL-specific one and is not
- * attributed to subsidiary handling.
+ * `sameClassExceptionRelevant` says whether this holder's column 16b
+ * provisions *are* its subsidiary-hazard treatment — true exactly when the
+ * holder carries two or more subsidiary hazard labels, where column 16b
+ * supplies the requirement the individual subsidiary axes would otherwise
+ * have been enumerated for. On every other entry a DIRECT_* provision is an
+ * ordinary DGL-specific one that the same-primary-class exception does not
+ * reach. The substituted-basis case is not a provision applied against the
+ * other cargo at all, and is flagged on the axis instead.
  */
 function applySgRule(
   acc: Accumulator,
   rule: SgRule,
   other: NormalizedEntry,
-  subsidiaryDriven: boolean,
+  sameClassExceptionRelevant: boolean,
 ): void {
   switch (rule.ruleType) {
     case 'AS_FOR_CLASS':
@@ -465,7 +476,7 @@ function applySgRule(
       }
       for (const label of matchableHazardLabels(other)) {
         if (rule.targets.includes(label)) {
-          contribute(acc, rule.level, subsidiaryDriven);
+          contribute(acc, rule.level, sameClassExceptionRelevant);
         }
       }
       return;
@@ -477,7 +488,7 @@ function applySgRule(
         return;
       }
       if (other.entry.segregationGroups.some((group) => rule.targets.includes(group))) {
-        contribute(acc, rule.level, subsidiaryDriven);
+        contribute(acc, rule.level, sameClassExceptionRelevant);
       }
       return;
     }
@@ -488,7 +499,7 @@ function applySgRule(
         return;
       }
       if (rule.targets.includes(other.entry.unNumber)) {
-        contribute(acc, rule.level, subsidiaryDriven);
+        contribute(acc, rule.level, sameClassExceptionRelevant);
       }
       return;
     }
@@ -556,7 +567,12 @@ export function evaluateSegregationPair(
   const a = normalizeEntry(left);
   const b = normalizeEntry(right);
 
-  const acc: Accumulator = { level: 0, subsidiaryDrivenLevel: 0, blockers: [], additionalRequirements: [] };
+  const acc: Accumulator = {
+    level: 0,
+    sameClassExceptionLevel: 0,
+    blockers: [],
+    additionalRequirements: [],
+  };
 
   // Step 2 — unresolved source content must never be dropped.
   if (a.unresolvedSubsidiaryTokens.length > 0 || b.unresolvedSubsidiaryTokens.length > 0) {
@@ -586,7 +602,7 @@ export function evaluateSegregationPair(
       for (const axisB of hazardsB) {
         const level = lookupAxis(acc, classRules, axisA.label, axisB.label);
         if (level !== null) {
-          contribute(acc, level, axisA.subsidiaryDriven || axisB.subsidiaryDriven);
+          contribute(acc, level, axisA.sameClassExceptionRelevant || axisB.sameClassExceptionRelevant);
         }
       }
     }
@@ -596,7 +612,7 @@ export function evaluateSegregationPair(
   // entry applies, and the strictest applicable requirement governs. Where
   // the holder carries two or more subsidiary hazard labels its provisions
   // *are* the subsidiary-hazard treatment, so what they contribute is
-  // recorded as subsidiary-driven for step 8.
+  // recorded as relevant to the same-class exception in step 8.
   const multiSubsidiaryA = a.subsidiaryLabels.length > 1;
   const multiSubsidiaryB = b.subsidiaryLabels.length > 1;
   for (const rule of rulesA) {
@@ -609,19 +625,22 @@ export function evaluateSegregationPair(
   // Step 8 — substances of the same class may be stowed together without
   // regard to segregation required by their subsidiary hazard label(s),
   // provided they do not react dangerously with each other. "Same class" is
-  // judged on the Dangerous Goods List primary hazard class, so a pair that
-  // shares one and whose requirement exceeds what those primary classes
-  // impose on their own *because of subsidiary-hazard treatment* is sitting
-  // exactly on that exception. The dataset carries no dangerous-reaction
-  // detail, so fail to review rather than asserting either the raised level
-  // or CLEAR.
+  // judged on the Dangerous Goods List primary hazard class, and 7.2.6.2 says
+  // so explicitly for an entry carrying "segregation as for class ...": the
+  // substituted class governs the ordinary table lookup but not this
+  // permission. So a pair that shares an actual primary class and whose
+  // requirement exceeds what those primary classes impose on their own —
+  // because of subsidiary-hazard treatment, or because of a substituted
+  // basis — is sitting exactly on that exception. The dataset carries no
+  // dangerous-reaction detail, so fail to review rather than asserting either
+  // the raised level or CLEAR.
   //
-  // The test is the subsidiary-driven contribution, not the overall level: a
-  // DGL-specific provision on same-class goods that has nothing to do with
-  // subsidiary handling raises a requirement the exception never reaches, and
-  // must still produce its number rather than a review.
+  // The test is that contribution, not the overall level: an ordinary
+  // DGL-specific provision on same-class goods — a DIRECT_* rule with neither
+  // subsidiary-hazard nor substitution provenance — raises a requirement the
+  // exception never reaches, and must still produce its number.
   const samePrimaryClass = left.primaryClass === right.primaryClass;
-  if (samePrimaryClass && acc.subsidiaryDrivenLevel > (primaryOnlyLevel ?? 0)) {
+  if (samePrimaryClass && acc.sameClassExceptionLevel > (primaryOnlyLevel ?? 0)) {
     addBlocker(acc, REVIEW_BLOCKER.sameClassSubsidiary);
   }
 

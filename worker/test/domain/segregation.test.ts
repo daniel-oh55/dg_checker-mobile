@@ -956,9 +956,11 @@ describe('evaluateSegregationPair - same primary class provenance', () => {
   });
 
   it('D3. does not invent the exception for an ordinary DIRECT provision on same-class goods', () => {
-    // No subsidiary label anywhere: the provision is a DGL-specific one that
-    // has nothing to do with subsidiary handling, so the requirement it
-    // raises is reported as a number rather than escalated.
+    // Control for D4: same actual primary class on both sides, an ordinary
+    // Column-16b DIRECT_CLASS rule, and no subsidiary-driven or substituted
+    // provenance anywhere. 7.2.6.1 does not reach a DGL-specific provision of
+    // this kind, so the requirement stays a definitive number — the
+    // same-class exception must not fire for every Column-16b rule.
     const result = evaluate(
       makeEntry({ primaryClass: '8', segregationCodes: ['SG_SEPARATED_FROM_8'] }),
       makeEntry({ primaryClass: '8' }),
@@ -968,16 +970,37 @@ describe('evaluateSegregationPair - same primary class provenance', () => {
     expect(result.reviewBlockers).toEqual([]);
   });
 
-  it('D4. does not invent the exception for a substitution unrelated to subsidiary handling', () => {
-    // Both sides class 3, left substituted to class 5.1 with no subsidiary
-    // label of its own: 5.1 <-> 3 = 2 is an ordinary substituted-basis
-    // requirement, not one the subsidiary-hazard exception reaches.
+  it('D4. requires review for an AS_FOR_CLASS raise on same-class goods with no subsidiary risk', () => {
+    // Both sides have an actual DGL primary class of 3, and the left entry
+    // carries no subsidiary hazard label at all. "Segregation as for class
+    // 5.1" governs the table lookup (5.1 <-> 3 = 2), but 7.2.6.2 directs the
+    // same-class permission of 7.2.6.1 back to the primary hazard class of
+    // the Dangerous Goods List, where 3 <-> 3 = 0. The substitution is
+    // therefore the whole reason the requirement exists, and whether these
+    // two react dangerously is not in the dataset, so the level cannot be
+    // finalized. Subsidiary-risk count is irrelevant to this path.
     const result = evaluate(
       makeEntry({ primaryClass: '3', segregationCodes: ['SG_AS_FOR_5_1'] }),
       makeEntry({ primaryClass: '3' }),
     );
 
-    expect(result.decision).toEqual({ status: 'SEGREGATION_REQUIRED', level: 2, reason: expect.any(String) });
+    expect(result.decision.status).toBe('REVIEW_REQUIRED');
+    expect(result.decision.level).toBeNull();
+    expect(result.reviewBlockers).toContain('SAME_CLASS_SUBSIDIARY_REVIEW');
+  });
+
+  it('D4b. still finalizes an AS_FOR_CLASS substitution that raises nothing above the primary classes', () => {
+    // Same shape as D4 — shared actual primary class 5.1, a substitution to
+    // a different class — but the substituted basis 2.2 <-> 5.1 = 0 is no
+    // more stringent than 5.1 <-> 5.1 = 0. Nothing is raised above what the
+    // primary classes impose, so there is no exception to sit on and the
+    // substitution does not escalate the pair on its own.
+    const result = evaluate(
+      makeEntry({ primaryClass: '5.1', segregationCodes: ['SG_AS_FOR_2_2'] }),
+      makeEntry({ primaryClass: '5.1' }),
+    );
+
+    expect(result.decision.status).toBe('CLEAR');
     expect(result.reviewBlockers).toEqual([]);
   });
 

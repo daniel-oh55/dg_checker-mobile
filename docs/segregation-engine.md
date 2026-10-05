@@ -133,6 +133,11 @@ Two consequences worth stating explicitly:
 - A substitution changes only the table lookup. It does **not** change what
   another cargo's provision matches against: a provision naming class N still
   matches the entry's real primary class and its subsidiary hazard labels.
+- A substitution does **not** govern the same-primary-class permission. That
+  permission is read against the actual Dangerous Goods List primary hazard
+  class, so an `AS_FOR_CLASS` increase between goods of the same actual
+  primary class is not a final answer — see
+  [Same primary class](#same-primary-class-and-exception-provenance).
 
 Provisions that *remove* segregation ("however, in relation to class ..., no
 segregation needs to be applied", named exclusions, conditional exceptions)
@@ -324,7 +329,7 @@ So:
 The individual subsidiary axes are still not enumerated for a 2+-subsidiary
 entry, and the engine does not fall back to a Cartesian maximum over them.
 
-### Same primary class and subsidiary-driven provenance
+### Same primary class and exception provenance
 
 Substances of the same class may be stowed together without regard to the
 segregation required by their subsidiary hazard label(s), provided they do not
@@ -332,31 +337,42 @@ react dangerously with each other. The dataset records no dangerous-reaction
 detail, so a pair sitting on that exception is `REVIEW_REQUIRED` rather than
 either the raised level or `CLEAR`.
 
-Deciding whether a pair sits on it needs provenance, not just a level: the
-exception reaches only requirements that **subsidiary-hazard treatment**
-introduced. The engine therefore carries one extra accumulator beside the
-level — the highest *subsidiary-driven* contribution — and raises
-`SAME_CLASS_SUBSIDIARY_REVIEW` when the two Dangerous Goods List primary
-hazard classes are the same and that accumulator exceeds what those primary
-classes impose on their own.
+**"Same class" means the actual Dangerous Goods List primary hazard class.**
+That matters most for an entry carrying "segregation as for class ...": the
+substituted class governs the ordinary table lookup, but the same-class
+permission is read against the primary hazard class the Dangerous Goods List
+gives. A class 4.3 entry told to segregate as for class 3 is still, for this
+purpose, a class 4.3 entry — which is why it may be stowed with other class
+4.3 goods that do not react dangerously with it.
 
-A contribution is subsidiary-driven when it comes from:
+Deciding whether a pair sits on the exception needs provenance, not just a
+level. The engine therefore carries one extra accumulator beside the level —
+`sameClassExceptionLevel`, the highest contribution the exception can reach —
+and raises `SAME_CLASS_SUBSIDIARY_REVIEW` when the two Dangerous Goods List
+primary hazard classes are the same and that accumulator exceeds what those
+primary classes impose on their own.
 
+A contribution is exception-relevant when it comes from:
+
+- an **`AS_FOR_CLASS` substituted table basis**, whatever the entry's
+  subsidiary-risk count — including zero. The substitution is precisely what
+  the same-class reading sets aside, so an increase it produces between goods
+  of the same actual primary class cannot be finalized unless the
+  dangerous-reaction compatibility is known, which the dataset never records;
 - a **single-subsidiary table axis** — the axis exists only because of the
   subsidiary label (and a subsidiary label the basis already carries
   introduces nothing, so it is not counted twice);
-- an **`AS_FOR_CLASS` substitution on a 2+-subsidiary entry**, where column
-  16b *is* the subsidiary-hazard treatment standing in for those axes;
 - an **applicable `DIRECT_*` column 16b provision on a 2+-subsidiary entry**,
-  for the same reason. This is the case a table-only comparison misses
-  entirely: the table can stay flat while the provision raises the
+  where column 16b *is* the subsidiary-hazard treatment standing in for the
+  axes that are not enumerated. This is the case a table-only comparison
+  misses entirely: the table can stay flat while the provision raises the
   requirement.
 
-A column 16b provision on an entry with one subsidiary label or none is an
-ordinary Dangerous Goods List provision that has nothing to do with subsidiary
-handling. The exception does not reach it, so its requirement is reported as a
-number rather than escalated — not every direct provision on same-class goods
-is subsidiary-driven.
+An ordinary `DIRECT_CLASS` / `DIRECT_SGG` / `DIRECT_UN` provision on an entry
+with one subsidiary label or none is a Dangerous Goods List provision with no
+subsidiary-driven or substituted provenance. The exception does not reach it,
+so its requirement is reported as a number rather than escalated — the
+same-class review must not fire for every column 16b rule.
 
 ### Multi-variant aggregation
 
@@ -385,7 +401,7 @@ These are correct, expected outcomes. They stay fail-closed permanently.
 | Blocker | Cause |
 | --- | --- |
 | `CLASS1_TO_CLASS1_UNRESOLVED` | `*` cell; the compatibility-group tables it refers to are not published by the authorized source |
-| `SAME_CLASS_SUBSIDIARY_REVIEW` | shared primary hazard class, with a *subsidiary-driven* requirement raised above what those primary classes impose on their own — the same-class permission turns on whether the substances react dangerously, which the dataset does not record |
+| `SAME_CLASS_SUBSIDIARY_REVIEW` | shared *actual* primary hazard class, with a requirement raised above what those primary classes impose on their own by subsidiary-hazard treatment or by an `AS_FOR_CLASS` substitution — the same-class permission turns on whether the substances react dangerously, which the dataset does not record |
 | `REVIEW_ONLY_SG_CODE:<code>` | a provision whose condition (holder content, named exclusion, flashpoint, compatibility group, cargo context) cannot be decided from two DG records |
 | `MULTIPLE_SUBSIDIARY_RISKS_NO_PROVISION` | two or more subsidiary hazard labels whose column 16b yields no mechanically evaluable provision to supply the requirement |
 | `EXEMPTION_REQUIRES_REVIEW` | a provision that relaxes segregation under a condition the app cannot verify — the relaxation is not granted, and the un-relaxed figure is not published as a final answer either |
