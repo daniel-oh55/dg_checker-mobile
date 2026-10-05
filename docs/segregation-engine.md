@@ -61,6 +61,7 @@ with a `ruleType` from a small fixed set:
 | `DIRECT_UN` | numeric level against a specific UN number | 1–4 |
 | `AS_FOR_CLASS` | substitute a target class, then use the class matrix | `null` |
 | `ADDITIONAL_REQUIREMENT` | a non-level obligation that must be surfaced | `null` |
+| `EXEMPTION` | a provision that *removes* segregation under a condition this engine cannot verify; forces `REVIEW_REQUIRED` | `null` |
 | `REVIEW_ONLY` | conditions this engine cannot evaluate | `null` |
 | `RESERVED` | reserved in the source; must never be applied | `null` |
 
@@ -92,40 +93,125 @@ any persisted row is NULL or blank.
 Evaluation order for one concrete DG entry variant pair:
 
 1. normalize source hazard data
-2. detect unresolved / unsupported subsidiary data
-3. detect the Class 1 limitation
-4. base primary ↔ primary matrix lookup
-5. permitted subsidiary matrix axes
-6. SG rules, holder = left
-7. SG rules, holder = right
-8. same-primary-class subsidiary exception
+2. detect unresolved subsidiary / segregation source content
+3. resolve each side's column 16b provisions
+4. establish each side's **segregation-table basis**, substituting an
+   "as for class" target for the primary class where one applies
+5. add each side's permitted **subsidiary-hazard axis**
+6. evaluate the table across both sides' axes, strictest governing
+7. apply column 16b provisions in both directions, strictest governing
+8. same-primary-class dangerous-reaction exception
 
-Numeric contributions aggregate by `max`, so **a weaker rule can never reduce
-a stronger one**. Review blockers dominate any numeric result.
+Review blockers dominate any numeric result.
+
+### Precedence: general table vs specific provision
+
+Both the general segregation table and the specific provisions in column 16b
+of the Dangerous Goods List have to be consulted, and where they *conflict*
+the column 16b provision governs. That splits into two mechanically different
+cases, and conflating them was the engine's main defect:
+
+**Ordinary provisions are cumulative.** "Stow away from class N" and "stow
+separated from class N" impose a requirement; they do not cap one. So the
+table level and every applicable provision level combine by `max`, and the
+strictest governs. A level-1 provision never relaxes a level-2 table cell, and
+a level-3 provision always beats a level-1 table cell. Both directions are
+covered by regression tests.
+
+**"Segregation as for class ..." replaces the basis.** Where the Dangerous
+Goods List specifies it, the provisions applicable to *that* class are the
+ones applied — the substituted class takes the place of the entry's own
+primary hazard class for table lookups rather than adding a second candidate
+level beside it. Treating it as just another `max` input over-segregates,
+because the entry keeps a row the substitution exists to displace.
+
+Two consequences worth stating explicitly:
+
+- A substitution can legitimately produce a **lower** result than the entry's
+  own class would. That is the provision working as intended, not a rule
+  being lost.
+- A substitution changes only the table lookup. It does **not** change what
+  another cargo's provision matches against: a provision naming class N still
+  matches the entry's real primary class and its subsidiary hazard labels.
+- A substitution does **not** govern the same-primary-class permission. That
+  permission is read against the actual Dangerous Goods List primary hazard
+  class, so an `AS_FOR_CLASS` increase between goods of the same actual
+  primary class is not a final answer — see
+  [Same primary class](#same-primary-class-and-exception-provenance).
+
+Provisions that *remove* segregation ("however, in relation to class ..., no
+segregation needs to be applied", named exclusions, conditional exceptions)
+are never applied mechanically — each is classified `REVIEW_ONLY` or
+`EXEMPTION` at conversion time, so no downward override is ever silently
+taken, and both route the pair to `REVIEW_REQUIRED`.
+
+### Segregation levels
+
+Levels 1-4 are not an app-invented severity scale. Each names a defined
+segregation term, and the authorized source writes those terms verbatim in
+its special-provision wording, which is what the converter maps back to 1-4:
+
+| Level | Term |
+| --- | --- |
+| 1 | away from |
+| 2 | separated from |
+| 3 | separated by a complete compartment or hold from |
+| 4 | separated longitudinally by an intervening complete compartment or hold from |
+
+Level 0 is the **absence** of a numeric requirement and therefore has no term.
+
+`mobile/src/ui/segregation-levels.ts` is the single place this wording is
+written for display, so no component restates it. It is presentation only —
+nothing there feeds a decision, and the numeric engine semantics do not depend
+on it.
 
 ### X semantics
 
-`X` in the authorized matrix means the **base matrix contributes no numeric
-segregation level**. It does *not* mean "stop evaluating".
+`X` in the authorized matrix means **the Dangerous Goods List has to be
+consulted** to see whether specific provisions exist. It does *not* mean
+"safe", "compatible" or "stop evaluating".
 
 An `X` cell is therefore stored as a real level-0 rule, not omitted, and the
-engine still goes on to evaluate subsidiary risks, SG → CLASS, SG → SGG,
-SG → UN, AS_FOR_CLASS and additional requirements on top of it. `base X` plus
-an SG rule at level 2 yields a final level 2. X never lowers a stronger result.
+engine still goes on to evaluate subsidiary-hazard axes, SG -> CLASS,
+SG -> SGG, SG -> UN, "as for class" substitution and additional requirements
+on top of it. `base X` plus a provision at level 2 yields a final level 2. X
+never lowers a stronger result, and a level-0 outcome is reported as *no
+numeric segregation level was identified from the evaluated rules*, never as
+approval to load.
 
 An absent class pair is a different thing entirely: it fails closed to review.
 
 ### Subsidiary risks
 
-With at most one resolved subsidiary hazard per entry, all applicable axes are
-evaluated — including **Sub ↔ Sub**, which the reference implementation missed:
+How a subsidiary hazard enters the evaluation depends on how many there are,
+and the two cases are governed differently:
+
+**Exactly one subsidiary hazard label.** Its provisions apply and take
+precedence wherever they are more stringent than the primary hazard's, which
+is exactly what maximizing over both axes produces. All four axes are
+evaluated, including **Sub <-> Sub**:
 
 ```
-Primary A ↔ Primary B
-Sub A     ↔ Primary B
-Primary A ↔ Sub B
-Sub A     ↔ Sub B
+Basis A ↔ Basis B
+Sub A   ↔ Basis B
+Basis A ↔ Sub B
+Sub A   ↔ Sub B
 ```
+
+A subsidiary hazard of **class 1** contributes the provisions for division
+1.3, not the division's own row.
+
+**Two or more subsidiary hazard labels.** The applicable provisions are the
+ones given in column 16b, so the individual subsidiary axes are deliberately
+*not* enumerated against the table — a full hazard Cartesian product would
+invent requirements the provisions are there to specify. The entry's basis
+plus its column 16b provisions are what is evaluated.
+
+An entry carrying two or more subsidiary hazards and **no column 16b
+provision at all** leaves the requirement unspecified, so it fails closed
+(`MULTIPLE_SUBSIDIARY_RISKS_NO_PROVISION`) rather than quietly resolving to
+its primary class alone. No entry in the current authorized dataset is in
+that shape; the guard exists for source revisions.
 
 A standalone `P` in the source subsidiary column is an orthogonal
 marine-pollutant marker, not a hazard class. It is stripped before class
@@ -140,6 +226,12 @@ applies. Segregation-group membership on its own imposes **nothing**: `SGG1` on
 one entry and nothing relevant on the other is not a segregation requirement.
 A level appears only when the other entry actually holds an SG rule targeting
 that group.
+
+A provision naming a class matches the other cargo's primary class **and its
+subsidiary hazard labels** — a segregation term such as "away from class N"
+covers goods of class N and goods carrying a class N subsidiary label. That
+rule has no single-subsidiary restriction, so every resolved subsidiary label
+is matchable, including on an entry carrying several.
 
 Class and division targets are matched through explicit source-derived
 normalization, never naive string equality — a broad `class 1` target resolves
@@ -160,9 +252,9 @@ authorized source does not publish the compatibility-group tables needed to
 resolve it. There is no fallback level — in particular, no
 "unresolved → level 2" behaviour.
 
-### Additional requirements
+### Additional requirements and exemptions
 
-Six source codes express obligations that are not a 0–4 level. They are
+Some source codes express an obligation that is not a 0–4 level. They are
 classified `ADDITIONAL_REQUIREMENT` and collected separately:
 
 ```
@@ -175,8 +267,112 @@ unrestricted or "safe to mix" — there is an outstanding obligation that has to
 reach the operator.
 
 `AdditionalRequirement` is not the same as `REVIEW_REQUIRED`; the two concepts
-stay separate. Only the code and its classification are exposed, not the
-regulatory prose.
+stay separate, and an additional requirement can sit alongside level 0, a
+numeric level, or a review outcome. Only the code and its classification are
+exposed, not the regulatory prose.
+
+A provision that *disapplies* segregation is the opposite thing and must not
+be classified as an obligation. Those are `EXEMPTION`, and the app cannot
+determine whether the exemption's condition applies to the cargo in front of
+it. Failing closed therefore means two things at once:
+
+- **The exemption is not granted.** No level is lowered, nothing is relaxed,
+  and the provision never reaches the operator as an obligation to satisfy —
+  telling someone a relaxation is an outstanding requirement would be actively
+  wrong.
+- **The un-relaxed result is not presented as a final answer either.** If the
+  condition does hold, the strict figure is wrong in the other direction, and
+  the app has no way to tell. So the pair becomes `REVIEW_REQUIRED` through
+  the `EXEMPTION_REQUIRES_REVIEW` blocker.
+
+The conservative un-relaxed level keeps accumulating internally; the blocker
+simply dominates the public decision, exactly as every other blocker does. The
+row stays in the dataset so the source provision remains auditable, and the
+blocker carries no payload, so no source wording escapes with it.
+
+### Multi-subsidiary semantic completeness
+
+Where an entry carries **two or more** subsidiary hazard labels, the
+applicable segregation provisions are the ones given in column 16b, so the
+individual subsidiary axes are not enumerated against the table. That makes
+column 16b load-bearing: if it supplies nothing usable, the requirement is
+simply unspecified.
+
+Completeness is judged on the **resolved rules**, not on how many tokens the
+source column happened to hold. A token that resolves to nothing evaluable
+cannot stand in for the provision the regulation says supplies the
+requirement.
+
+| Resolved rule type | Can it establish or evaluate a requirement? |
+| --- | --- |
+| `DIRECT_CLASS`, `DIRECT_SGG`, `DIRECT_UN` | yes — a level against a matchable target |
+| `AS_FOR_CLASS` | yes — it establishes the table basis |
+| `ADDITIONAL_REQUIREMENT` | no — it accompanies a requirement, it does not supply one |
+| `EXEMPTION`, `REVIEW_ONLY`, `RESERVED` | no — these are the cases the engine refuses to resolve |
+| unknown code, unresolved source token | no — nothing was resolved at all |
+
+So:
+
+- **At least one mechanically evaluable provision, and no blocker preventing
+  resolution** → evaluate the basis plus the applicable column 16b provisions
+  normally.
+- **None** → `REVIEW_REQUIRED` via `MULTIPLE_SUBSIDIARY_RISKS_NO_PROVISION`.
+  A `DIRECT_*` row missing its level or its targets is malformed and counts as
+  nothing here, so a broken row can never stand in for a real provision.
+- `EXEMPTION`, `REVIEW_ONLY`, `RESERVED`, an unknown code and an unresolved
+  source token also raise their own blockers, so such an entry reaches review
+  by both routes and the blocker list says which.
+- `ADDITIONAL_REQUIREMENT` is still surfaced on its own channel and is still
+  reported on a pair that resolved to review — but by itself it never proves
+  the multi-subsidiary requirement has been resolved.
+
+The individual subsidiary axes are still not enumerated for a 2+-subsidiary
+entry, and the engine does not fall back to a Cartesian maximum over them.
+
+### Same primary class and exception provenance
+
+Substances of the same class may be stowed together without regard to the
+segregation required by their subsidiary hazard label(s), provided they do not
+react dangerously with each other. The dataset records no dangerous-reaction
+detail, so a pair sitting on that exception is `REVIEW_REQUIRED` rather than
+either the raised level or `CLEAR`.
+
+**"Same class" means the actual Dangerous Goods List primary hazard class.**
+That matters most for an entry carrying "segregation as for class ...": the
+substituted class governs the ordinary table lookup, but the same-class
+permission is read against the primary hazard class the Dangerous Goods List
+gives. A class 4.3 entry told to segregate as for class 3 is still, for this
+purpose, a class 4.3 entry — which is why it may be stowed with other class
+4.3 goods that do not react dangerously with it.
+
+Deciding whether a pair sits on the exception needs provenance, not just a
+level. The engine therefore carries one extra accumulator beside the level —
+`sameClassExceptionLevel`, the highest contribution the exception can reach —
+and raises `SAME_CLASS_SUBSIDIARY_REVIEW` when the two Dangerous Goods List
+primary hazard classes are the same and that accumulator exceeds what those
+primary classes impose on their own.
+
+A contribution is exception-relevant when it comes from:
+
+- an **`AS_FOR_CLASS` substituted table basis**, whatever the entry's
+  subsidiary-risk count — including zero. The substitution is precisely what
+  the same-class reading sets aside, so an increase it produces between goods
+  of the same actual primary class cannot be finalized unless the
+  dangerous-reaction compatibility is known, which the dataset never records;
+- a **single-subsidiary table axis** — the axis exists only because of the
+  subsidiary label (and a subsidiary label the basis already carries
+  introduces nothing, so it is not counted twice);
+- an **applicable `DIRECT_*` column 16b provision on a 2+-subsidiary entry**,
+  where column 16b *is* the subsidiary-hazard treatment standing in for the
+  axes that are not enumerated. This is the case a table-only comparison
+  misses entirely: the table can stay flat while the provision raises the
+  requirement.
+
+An ordinary `DIRECT_CLASS` / `DIRECT_SGG` / `DIRECT_UN` provision on an entry
+with one subsidiary label or none is a Dangerous Goods List provision with no
+subsidiary-driven or substituted provenance. The exception does not reach it,
+so its requirement is reported as a number rather than escalated — the
+same-class review must not fire for every column 16b rule.
 
 ### Multi-variant aggregation
 
@@ -193,25 +389,44 @@ Every left variant × right variant pair is evaluated.
 
 ## REVIEW_REQUIRED boundaries
 
-Unresolved regulatory conditions stay fail-closed. A pair is
-`REVIEW_REQUIRED` when any of these holds:
+`REVIEW_REQUIRED` means exactly one thing: **the application cannot determine
+a final segregation requirement from the data and rules it models, so further
+IMDG review is required.** It is not a catch-all, and the two kinds of cause
+below are not equivalent.
+
+### A. Regulatory review — the rule itself needs information the app lacks
+
+These are correct, expected outcomes. They stay fail-closed permanently.
 
 | Blocker | Cause |
 | --- | --- |
-| `CLASS1_TO_CLASS1_UNRESOLVED` | `*` cell; compatibility-group tables absent from source |
-| `UNRESOLVED_SUBSIDIARY_SOURCE` | subsidiary cell the converter could not resolve mechanically |
-| `MULTIPLE_SUBSIDIARY_RISKS` | two or more resolved subsidiary risks on one entry |
-| `SAME_CLASS_SUBSIDIARY_REVIEW` | shared primary class, requirement introduced only by a subsidiary axis |
-| `REVIEW_ONLY_SG_CODE:<code>` | SG provision with conditions this engine cannot model |
-| `RESERVED_SG_CODE:<code>` | entry unexpectedly references a reserved code |
-| `UNKNOWN_SG_CODE:<code>` | SG code with no row in `sg_rules` |
-| `MISSING_CLASS_RULE:<a>\|<b>` | required class pair absent from the authorized table |
-| `MALFORMED_SG_RULE:<code>` | stored rule shape the runtime refuses to guess about |
+| `CLASS1_TO_CLASS1_UNRESOLVED` | `*` cell; the compatibility-group tables it refers to are not published by the authorized source |
+| `SAME_CLASS_SUBSIDIARY_REVIEW` | shared *actual* primary hazard class, with a requirement raised above what those primary classes impose on their own by subsidiary-hazard treatment or by an `AS_FOR_CLASS` substitution — the same-class permission turns on whether the substances react dangerously, which the dataset does not record |
+| `REVIEW_ONLY_SG_CODE:<code>` | a provision whose condition (holder content, named exclusion, flashpoint, compatibility group, cargo context) cannot be decided from two DG records |
+| `MULTIPLE_SUBSIDIARY_RISKS_NO_PROVISION` | two or more subsidiary hazard labels whose column 16b yields no mechanically evaluable provision to supply the requirement |
+| `EXEMPTION_REQUIRES_REVIEW` | a provision that relaxes segregation under a condition the app cannot verify — the relaxation is not granted, and the un-relaxed figure is not published as a final answer either |
 
-Multiple-subsidiary and same-primary-class cases are deliberate fail-closed
-policy, not gaps to be papered over: the authorized dataset does not carry the
-dangerous-reaction detail needed to finalize them, and this PR does not build a
-multiple-subsidiary exception engine.
+### B. Data or system integrity — something is wrong with the dataset
+
+These are **defects, not normal behaviour**. The runtime still fails closed if
+one occurs, but a production dataset audit should find zero of them.
+
+| Blocker | Cause |
+| --- | --- |
+| `UNRESOLVED_SUBSIDIARY_SOURCE` | a subsidiary-hazard source cell the converter could not resolve |
+| `UNRESOLVED_SEGREGATION_SOURCE` | a segregation source cell that yielded no usable code |
+| `UNKNOWN_SG_CODE:<code>` | a well-formed code with no row in `sg_rules` |
+| `RESERVED_SG_CODE:<code>` | an active entry referencing a reserved code |
+| `MISSING_CLASS_RULE:<a>\|<b>` | a required class pair absent from the authorized table |
+| `MALFORMED_SG_RULE:<code>` | a stored rule shape the runtime refuses to guess about |
+
+The current authorized source carries a small number of category-B
+occurrences, all of which originate upstream in the workbook export rather
+than in this application: subsidiary-hazard cells that the spreadsheet stored
+as dates, and one segregation cell holding a cross-reference to the row above
+instead of a provision. They are reported by the converter and fail closed at
+runtime; the fix belongs in the source export, and this engine deliberately
+does not reconstruct regulatory values from a corrupted cell.
 
 ### Blockers are internal
 
@@ -226,8 +441,14 @@ decision — single endpoint and batch, per-pair and aggregated — carries one
 stable generic sentence:
 
 ```
-Manual review required due to unresolved or unsupported segregation conditions.
+This pair has conditions the automated check cannot resolve, so further review is required.
 ```
+
+The mobile client does not render that sentence directly — it shows
+`추가 확인 필요 / Further review required` with a one-line explanation that the
+pair has conditions outside the automated check's range. Both say the same
+thing: the check ran and could not finish this pair, which is not the same as
+the operator having skipped a step, and neither names the blocker.
 
 A per-cause reason would itself be a side channel, telling a caller which
 private source condition fired. The blockers stay on
@@ -267,9 +488,19 @@ No authorized source row may silently disappear because the converter does not
 understand it.
 
 - **SG sheet** — every row becomes an automatic rule, an additional
-  requirement, `REVIEW_ONLY`, `RESERVED`, or a hard conversion failure.
-  Unrecognized wording stops the conversion. Duplicate codes, malformed codes
-  and an unexpected row count all fail.
+  requirement, an `EXEMPTION`, `REVIEW_ONLY`, `RESERVED`, or a hard conversion
+  failure. Exemption wording is classified before obligation wording, so a
+  provision that removes segregation can never be reported as one to satisfy —
+  but it can no longer swallow one either. A **compound row**, carrying
+  exemption wording *and* an affirmative obligation (a level term, a
+  substituted-class directive, or a non-level obligation), is classified
+  `REVIEW_ONLY`: collapsing it to `EXEMPTION` would silently discard a
+  positive requirement, and classifying it by the obligation alone would
+  assert a requirement the exemption may lift. `REVIEW_ONLY` drops neither.
+  This is a conservative detector, not a multi-clause rule engine — the
+  converter still produces exactly one rule per source row. Unrecognized
+  wording stops the conversion. Duplicate codes, malformed codes and an
+  unexpected row count all fail.
 - **Matrix** — every cell becomes a numeric rule, an `X` → level-0 rule, an
   omitted `*` Class 1 ↔ Class 1 pair, or a hard failure. A `*` outside the
   Class 1 ↔ Class 1 region fails the conversion.

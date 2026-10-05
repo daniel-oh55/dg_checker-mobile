@@ -27,6 +27,7 @@ const SG_RULE_TYPES: ReadonlySet<string> = new Set<SgRuleType>([
   'DIRECT_UN',
   'AS_FOR_CLASS',
   'ADDITIONAL_REQUIREMENT',
+  'EXEMPTION',
   'REVIEW_ONLY',
   'RESERVED',
 ]);

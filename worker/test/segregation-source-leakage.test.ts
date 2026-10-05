@@ -451,7 +451,7 @@ describe('public API never surfaces unresolved private source text', () => {
     }
 
     expect([...reasons]).toEqual([
-      'Manual review required due to unresolved or unsupported segregation conditions.',
+      'This pair has conditions the automated check cannot resolve, so further review is required.',
     ]);
   });
 });
