@@ -1,6 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native';
 import type { SegregationBatchSummary } from '../api/segregation';
-import { segregationLevelLabel } from '../ui/segregation-levels';
+import { segregationLevelDisplayLabel } from '../ui/segregation-levels';
 import {
   summaryHeadline,
   summaryMetricAccents,
@@ -25,6 +25,9 @@ interface MetricTile {
 export function BatchResultSummary({ summary }: BatchResultSummaryProps) {
   const headline = summaryHeadline(summary);
   const tone = summaryTone(summary);
+  // Named in the same canonical wording the pair cards use, so the summary and
+  // the card below it never describe one level two different ways.
+  const highestLevelLabel = segregationLevelDisplayLabel(summary.maxRequiredLevel);
 
   // Counts that qualify the headline. Total pairs and the highest level are the
   // two framing figures and sit in the strip above, not in this grid.
@@ -69,13 +72,11 @@ export function BatchResultSummary({ summary }: BatchResultSummaryProps) {
           <Text style={styles.framingLabelEn}>{summaryMetricLabels.totalPairs.en}</Text>
         </View>
 
-        {summary.maxRequiredLevel !== null && (
+        {highestLevelLabel !== null && (
           <>
             <View style={styles.framingDivider} />
             <View style={styles.framingCell}>
-              <Text style={[styles.framingValue, { color: palette.brandBlue }]}>
-                {segregationLevelLabel(summary.maxRequiredLevel, 'en')}
-              </Text>
+              <Text style={styles.framingLevelValue}>{highestLevelLabel}</Text>
               <Text style={styles.framingLabelKo}>{summaryMetricLabels.highestLevel.ko}</Text>
               <Text style={styles.framingLabelEn}>{summaryMetricLabels.highestLevel.en}</Text>
             </View>
@@ -143,6 +144,15 @@ const styles = StyleSheet.create({
     color: palette.navy,
     fontVariant: ['tabular-nums'],
     letterSpacing: -0.4,
+  },
+  // The canonical level label is a phrase, not a figure, so it sits a few
+  // points down from the tabular total beside it and is allowed to wrap.
+  framingLevelValue: {
+    fontSize: 15,
+    fontWeight: '700',
+    lineHeight: 21,
+    color: palette.brandBlue,
+    letterSpacing: -0.2,
   },
   framingLabelKo: {
     ...typography.captionKo,

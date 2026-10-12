@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "check": "pnpm --filter mobile run typecheck && pnpm --filter worker run check"
+    "check": "pnpm --filter mobile run check && pnpm --filter worker run check"
   },
   "engines": {
     "node": ">=22"
