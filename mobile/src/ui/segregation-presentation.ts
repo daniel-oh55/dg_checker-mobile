@@ -10,7 +10,7 @@ export interface Bilingual {
   en: string;
 }
 
-import { segregationLevelLabel } from './segregation-levels';
+import { SEGREGATION_LEVEL_DISPLAY_LABEL, segregationLevelDisplayLabel } from './segregation-levels';
 import { palette } from './theme';
 
 export { palette };
@@ -91,19 +91,27 @@ export const reviewRequiredDetail: Bilingual = {
   en: 'Additional review is required for conditions not fully resolved by the automated check.',
 };
 
+/**
+ * The two lines of a pair's status panel: the outcome first, then the level it
+ * resolves to, named once in the canonical wording. The level is never
+ * restated in the outcome line, so the panel reads
+ * "격리 필요 / Level 2 · Separated from / 분리 적재" rather than repeating "Level 2".
+ */
 export function pairStatusText(status: DecisionStatus, level: number | null): Bilingual {
   switch (status) {
     case 'REVIEW_REQUIRED':
       return reviewRequiredText;
-    case 'SEGREGATION_REQUIRED':
+    case 'SEGREGATION_REQUIRED': {
+      const label = segregationLevelDisplayLabel(level);
       return {
-        ko: level === null ? '격리 필요' : `격리 필요 · ${segregationLevelLabel(level, 'ko')}`,
-        en: level === null ? 'Segregation required' : `Segregation required · ${segregationLevelLabel(level, 'en')}`,
+        ko: '격리 필요',
+        en: label ?? 'Segregation required',
       };
+    }
     case 'CLEAR':
       return {
-        ko: '확인된 규칙 기준 격리요건 없음 · Level 0',
-        en: 'No segregation requirement identified from the evaluated rules · Level 0',
+        ko: SEGREGATION_LEVEL_DISPLAY_LABEL[0],
+        en: 'No segregation requirement identified from the evaluated rules',
       };
   }
 }
@@ -236,6 +244,7 @@ export const summaryMetricLabels = {
   totalPairs: { ko: '전체 조합', en: 'Total pairs' } satisfies Bilingual,
   segregationRequired: { ko: '격리 필요', en: 'Segregation' } satisfies Bilingual,
   reviewRequired: { ko: '추가 확인', en: 'Review' } satisfies Bilingual,
+  /** The two halves of {@link SEGREGATION_LEVEL_DISPLAY_LABEL}[0], stacked by the tile. */
   levelZero: { ko: '격리 수준 없음', en: 'Level 0' } satisfies Bilingual,
   additionalRequirement: { ko: '추가 조건', en: 'Additional' } satisfies Bilingual,
   highestLevel: { ko: '조합 중 최고 Level', en: 'Highest pair level' } satisfies Bilingual,
